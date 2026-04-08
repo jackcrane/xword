@@ -81,6 +81,108 @@ struct xwordTests {
         #expect(!CrosswordSettings.supports(oversized))
     }
 
+    @MainActor
+    @Test func nextClueMovesFromFinalAcrossToFirstDown() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(
+            puzzle: puzzle,
+            entries: [:],
+            selectedCell: CrosswordCoordinate(row: 2, column: 0),
+            selectedDirection: .across
+        )
+
+        game.selectNextClue()
+
+        #expect(game.currentClue?.id == "down-1")
+        #expect(game.selectedCell == CrosswordCoordinate(row: 0, column: 0))
+    }
+
+    @MainActor
+    @Test func nextClueMovesFromFinalDownToFirstAcross() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(
+            puzzle: puzzle,
+            entries: [:],
+            selectedCell: CrosswordCoordinate(row: 0, column: 2),
+            selectedDirection: .down
+        )
+
+        game.selectNextClue()
+
+        #expect(game.currentClue?.id == "across-1")
+        #expect(game.selectedCell == CrosswordCoordinate(row: 0, column: 0))
+    }
+
+    @MainActor
+    @Test func previousClueMovesFromFirstDownToFinalAcross() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(
+            puzzle: puzzle,
+            entries: [:],
+            selectedCell: CrosswordCoordinate(row: 0, column: 0),
+            selectedDirection: .down
+        )
+
+        game.selectPreviousClue()
+
+        #expect(game.currentClue?.id == "across-5")
+        #expect(game.selectedCell == CrosswordCoordinate(row: 2, column: 0))
+    }
+
     private func sampleURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

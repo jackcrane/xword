@@ -287,20 +287,36 @@ final class CrosswordGame: ObservableObject {
 
     private func selectAdjacentClue(step: Int) {
         guard
-            let puzzle,
             let currentClue,
-            let currentIndex = clues(for: currentClue.direction).firstIndex(of: currentClue)
+            step != 0
         else {
             return
         }
 
         let clueSet = clues(for: currentClue.direction)
-        guard !clueSet.isEmpty else {
+        guard
+            !clueSet.isEmpty,
+            let currentIndex = clueSet.firstIndex(of: currentClue)
+        else {
             return
         }
 
-        let nextIndex = (currentIndex + step + clueSet.count) % clueSet.count
-        selectClue(clueSet[nextIndex])
+        let nextIndex = currentIndex + step
+        if clueSet.indices.contains(nextIndex) {
+            selectClue(clueSet[nextIndex])
+            return
+        }
+
+        let alternateDirection: CrosswordDirection = currentClue.direction == .across ? .down : .across
+        let alternateClues = clues(for: alternateDirection)
+        guard !alternateClues.isEmpty else {
+            let wrappedIndex = (currentIndex + step + clueSet.count) % clueSet.count
+            selectClue(clueSet[wrappedIndex])
+            return
+        }
+
+        let alternateIndex = step > 0 ? alternateClues.startIndex : alternateClues.index(before: alternateClues.endIndex)
+        selectClue(alternateClues[alternateIndex])
     }
 
     private func clues(for direction: CrosswordDirection) -> [CrosswordClue] {
