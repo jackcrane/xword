@@ -40,6 +40,7 @@ struct KeyboardInputView: View {
             Picker("Input Mode", selection: $selectedMode) {
                 Text("Keyboard").tag(InputPanelMode.keyboard)
                 Text("Clues").tag(InputPanelMode.clues)
+                Text("Multiplayer").tag(InputPanelMode.multiplayer)
                 Text("Settings").tag(InputPanelMode.settings)
             }
             .pickerStyle(.segmented)

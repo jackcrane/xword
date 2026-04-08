@@ -29,6 +29,7 @@ enum AppColorScheme: String, CaseIterable, Identifiable {
 enum InputPanelMode: String, CaseIterable, Identifiable {
     case keyboard = "Keyboard"
     case clues = "Clues"
+    case multiplayer = "Multiplayer"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -83,7 +84,7 @@ struct ContentView: View {
                 switch newValue {
                 case .keyboard:
                     presentedSheet = nil
-                case .clues, .settings:
+                case .clues, .multiplayer, .settings:
                     presentedSheet = newValue
                 }
             }
@@ -92,6 +93,8 @@ struct ContentView: View {
             }) { sheet in
                 if sheet == .clues, let puzzle = game.puzzle {
                     clueSheet(for: puzzle)
+                } else if sheet == .multiplayer {
+                    multiplayerSheet
                 } else if sheet == .settings {
                     settingsSheet
                 }
@@ -263,9 +266,10 @@ struct ContentView: View {
             .padding(.top, 20)
             .padding(.bottom, 24)
         }
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(Color.clear)
         .presentationDetents([.fraction(0.4), .large])
         .presentationContentInteraction(.scrolls)
+        .presentationBackground(.ultraThinMaterial)
     }
 
     private var settingsSheet: some View {
@@ -315,10 +319,23 @@ struct ContentView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
         }
         .presentationDetents([.large])
+        .presentationBackground(.ultraThinMaterial)
+    }
+
+    private var multiplayerSheet: some View {
+        NavigationStack {
+            Color.clear
+                .navigationTitle("Multiplayer")
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(.ultraThinMaterial)
     }
 
     private func clueSection(title: String, clues: [CrosswordClue]) -> some View {
