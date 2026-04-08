@@ -8,6 +8,7 @@ import SwiftUI
 enum InputPanelMode: String, CaseIterable, Identifiable {
     case keyboard = "Keyboard"
     case clues = "Clues"
+    case settings = "Settings"
 
     var id: String { rawValue }
 }
@@ -16,7 +17,8 @@ struct ContentView: View {
     @StateObject private var game: CrosswordGame
     @State private var isKeyboardFocused = false
     @State private var inputPanelMode: InputPanelMode = .keyboard
-    @State private var isClueSheetPresented = false
+    @State private var presentedSheet: InputPanelMode?
+    @State private var clueTransitionDirection: HorizontalEdge = .trailing
 
     @MainActor
     init() {
@@ -55,15 +57,20 @@ struct ContentView: View {
                 isKeyboardFocused = newValue != nil
             }
             .onChange(of: inputPanelMode) { _, newValue in
-                if newValue == .clues {
-                    isClueSheetPresented = true
+                switch newValue {
+                case .keyboard:
+                    presentedSheet = nil
+                case .clues, .settings:
+                    presentedSheet = newValue
                 }
             }
-            .sheet(isPresented: $isClueSheetPresented, onDismiss: {
+            .sheet(item: $presentedSheet, onDismiss: {
                 inputPanelMode = .keyboard
-            }) {
-                if let puzzle = game.puzzle {
+            }) { sheet in
+                if sheet == .clues, let puzzle = game.puzzle {
                     clueSheet(for: puzzle)
+                } else if sheet == .settings {
+                    settingsSheet
                 }
             }
         }
@@ -169,21 +176,57 @@ struct ContentView: View {
     }
 
     private var currentClueBanner: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(game.currentClue?.label ?? "No clue selected")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            Text(game.currentClue?.prompt ?? "Tap a square to begin.")
-                .font(.title3.weight(.semibold))
+        ZStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(game.currentClue?.label ?? "No clue selected")
+                    .font(.system(.headline, design: .serif))
+                    .foregroundStyle(.secondary)
+                Text(game.currentClue?.prompt ?? "Tap a square to begin.")
+                    .font(.title3.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .id(game.currentClue?.id ?? "no-clue")
+            .transition(clueBannerTransition)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .background(.ultraThinMaterial)
+        .background(Color.accentColor.opacity(0.1))
         .overlay(alignment: .top) {
             Divider()
         }
+        .gesture(
+            DragGesture(minimumDistance: 24)
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else {
+                        return
+                    }
+
+                    if value.translation.width < 0 {
+                        clueTransitionDirection = .trailing
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            game.selectNextClue()
+                        }
+                    } else {
+                        clueTransitionDirection = .leading
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            game.selectPreviousClue()
+                        }
+                    }
+                    isKeyboardFocused = true
+                }
+        )
+    }
+
+    private var clueBannerTransition: AnyTransition {
+        let insertionEdge: Edge = clueTransitionDirection == .trailing ? .trailing : .leading
+        let removalEdge: Edge = clueTransitionDirection == .trailing ? .leading : .trailing
+
+        return .asymmetric(
+            insertion: .move(edge: insertionEdge).combined(with: .opacity),
+            removal: .move(edge: removalEdge).combined(with: .opacity)
+        )
     }
 
     private func clueSheet(for puzzle: CrosswordPuzzle) -> some View {
@@ -201,6 +244,21 @@ struct ContentView: View {
         .presentationContentInteraction(.scrolls)
     }
 
+    private var settingsSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Settings")
+                .font(.system(size: 32, weight: .semibold, design: .serif))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(uiColor: .systemGroupedBackground))
+        .presentationDetents([.large])
+    }
+
     private func clueSection(title: String, clues: [CrosswordClue]) -> some View {
         Section {
             clueList(clues: clues)
@@ -208,10 +266,9 @@ struct ContentView: View {
             Text(title)
                 .font(.system(size: 24, weight: .semibold, design: .serif))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 6)
+                .padding(.top, 10)
                 .padding(.bottom, 10)
                 .padding(.horizontal, 4)
-                .background(.regularMaterial)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -223,7 +280,7 @@ struct ContentView: View {
                     game.selectClue(clue)
                     isKeyboardFocused = true
                     inputPanelMode = .keyboard
-                    isClueSheetPresented = false
+                    presentedSheet = nil
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Text("\(clue.number)")

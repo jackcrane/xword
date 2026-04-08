@@ -188,6 +188,14 @@ final class CrosswordGame: ObservableObject {
         selectedDirection = selectedDirection == .across ? .down : .across
     }
 
+    func selectNextClue() {
+        selectAdjacentClue(step: 1)
+    }
+
+    func selectPreviousClue() {
+        selectAdjacentClue(step: -1)
+    }
+
     private func moveForward() {
         guard let clue = currentClue, let selectedCell, let index = clue.cells.firstIndex(of: selectedCell) else {
             return
@@ -207,6 +215,37 @@ final class CrosswordGame: ObservableObject {
         }
 
         self.selectedCell = clue.cells[index - 1]
+    }
+
+    private func selectAdjacentClue(step: Int) {
+        guard
+            let puzzle,
+            let currentClue,
+            let currentIndex = clues(for: currentClue.direction).firstIndex(of: currentClue)
+        else {
+            return
+        }
+
+        let clueSet = clues(for: currentClue.direction)
+        guard !clueSet.isEmpty else {
+            return
+        }
+
+        let nextIndex = (currentIndex + step + clueSet.count) % clueSet.count
+        selectClue(clueSet[nextIndex])
+    }
+
+    private func clues(for direction: CrosswordDirection) -> [CrosswordClue] {
+        guard let puzzle else {
+            return []
+        }
+
+        switch direction {
+        case .across:
+            return puzzle.acrossClues
+        case .down:
+            return puzzle.downClues
+        }
     }
 
     private func applyPuzzle(_ puzzle: CrosswordPuzzle) {
