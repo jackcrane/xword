@@ -10,6 +10,12 @@ enum CrosswordSettings {
     static let maximumGridDimension = 20
 }
 
+extension CrosswordSettings {
+    static func supports(_ puzzle: CrosswordPuzzle) -> Bool {
+        puzzle.width <= maximumGridDimension && puzzle.height <= maximumGridDimension
+    }
+}
+
 @MainActor
 final class CrosswordGame: ObservableObject {
     @Published private(set) var puzzle: CrosswordPuzzle?
@@ -84,8 +90,7 @@ final class CrosswordGame: ObservableObject {
                         let contents = try String(contentsOf: url, encoding: .utf8)
                         let puzzle = try CrosswordParser().parse(contents: contents)
 
-                        guard puzzle.width <= CrosswordSettings.maximumGridDimension,
-                              puzzle.height <= CrosswordSettings.maximumGridDimension else {
+                        guard CrosswordSettings.supports(puzzle) else {
                             continue
                         }
 

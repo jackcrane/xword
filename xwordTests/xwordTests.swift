@@ -37,6 +37,50 @@ struct xwordTests {
         #expect(circledPuzzle.clue(at: CrosswordCoordinate(row: 3, column: 0), direction: .across)?.answer == "PAYRESPECTTO")
     }
 
+    @Test func allowsPuzzlesSmallerThanMaximumGridDimension() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        #expect(puzzle.width == 3)
+        #expect(puzzle.height == 3)
+        #expect(CrosswordSettings.supports(puzzle))
+    }
+
+    @Test func rejectsPuzzlesLargerThanMaximumGridDimension() throws {
+        let oversizedWidth = CrosswordSettings.maximumGridDimension + 1
+        let oversizedRow = "A" + String(repeating: "#", count: oversizedWidth - 1)
+        let oversized = try parser.parse(contents: """
+        Title: Oversized
+        Author: Tests
+        Date: 2026-04-08
+
+
+        \(oversizedRow)
+
+
+        A1. Oversized row start ~ A
+        D1. First oversized column ~ A
+        """)
+
+        #expect(!CrosswordSettings.supports(oversized))
+    }
+
     private func sampleURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

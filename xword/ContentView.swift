@@ -5,9 +5,18 @@
 
 import SwiftUI
 
+enum InputPanelMode: String, CaseIterable, Identifiable {
+    case keyboard = "Keyboard"
+    case clues = "Clues"
+
+    var id: String { rawValue }
+}
+
 struct ContentView: View {
     @StateObject private var game: CrosswordGame
     @State private var isKeyboardFocused = false
+    @State private var inputPanelMode: InputPanelMode = .keyboard
+    @State private var isClueSheetPresented = false
 
     @MainActor
     init() {
@@ -58,18 +67,36 @@ struct ContentView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .toolbar(.hidden, for: .navigationBar)
-            .overlay(alignment: .topLeading) {
-                KeyboardInputView(
-                    isFocused: $isKeyboardFocused,
-                    onInsertText: { text in
-                        game.insert(text: text)
-                    },
-                    onDeleteBackward: {
-                        game.deleteSelectedEntry()
-                    }
-                )
-                .frame(width: 1, height: 1)
-                .opacity(0.01)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if game.selectedCell != nil && isKeyboardFocused {
+                    KeyboardInputView(
+                        isFocused: $isKeyboardFocused,
+                        selectedMode: $inputPanelMode,
+                        onInsertText: { text in
+                            game.insert(text: text)
+                        },
+                        onDeleteBackward: {
+                            game.deleteSelectedEntry()
+                        }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: isKeyboardFocused)
+            .onChange(of: game.selectedCell) { _, newValue in
+                isKeyboardFocused = newValue != nil
+            }
+            .onChange(of: inputPanelMode) { _, newValue in
+                if newValue == .clues {
+                    isClueSheetPresented = true
+                }
+            }
+            .sheet(isPresented: $isClueSheetPresented, onDismiss: {
+                inputPanelMode = .keyboard
+            }) {
+                if let puzzle = game.puzzle {
+                    clueSheet(for: puzzle)
+                }
             }
         }
     }
@@ -101,11 +128,13 @@ struct ContentView: View {
 
     private func board(for puzzle: CrosswordPuzzle, width: CGFloat) -> some View {
         let spacing: CGFloat = 1
-        let availableWidth = max(0, width - 12 - spacing * CGFloat(puzzle.width - 1))
+        let borderWidth: CGFloat = 1
+        let availableWidth = max(0, width - (borderWidth * 2) - spacing * CGFloat(puzzle.width - 1))
         let rawCellSize = availableWidth / CGFloat(max(puzzle.width, 1))
         let cellSize = max(1, floor(rawCellSize.isFinite ? rawCellSize : 1))
         let boardHeight = cellSize * CGFloat(puzzle.height) + spacing * CGFloat(puzzle.height - 1)
         let highlightedCells = game.currentClueCells
+        let gridLineColor = Color(uiColor: .separator).opacity(0.55)
 
         return VStack(spacing: 0) {
             ForEach(0..<puzzle.height, id: \.self) { row in
@@ -130,12 +159,9 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(6)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemBackground))
-        )
-        .frame(width: width, height: boardHeight + 12, alignment: .topLeading)
+        .padding(borderWidth)
+        .background(gridLineColor)
+        .frame(width: width, height: boardHeight + (borderWidth * 2), alignment: .topLeading)
     }
 
     private var currentClueCard: some View {
@@ -172,46 +198,81 @@ struct ContentView: View {
 
     private func clueSections(for puzzle: CrosswordPuzzle) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            clueList(title: "Across", clues: puzzle.acrossClues)
-            clueList(title: "Down", clues: puzzle.downClues)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Across")
+                    .font(.system(size: 24, weight: .semibold, design: .serif))
+                clueList(clues: puzzle.acrossClues)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Down")
+                    .font(.system(size: 24, weight: .semibold, design: .serif))
+                clueList(clues: puzzle.downClues)
+            }
         }
     }
 
-    private func clueList(title: String, clues: [CrosswordClue]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func clueSheet(for puzzle: CrosswordPuzzle) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 18, pinnedViews: [.sectionHeaders]) {
+                clueSection(title: "Across", clues: puzzle.acrossClues)
+                clueSection(title: "Down", clues: puzzle.downClues)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 20)
+            .padding(.bottom, 24)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .presentationDetents([.fraction(0.4), .large])
+        .presentationContentInteraction(.scrolls)
+    }
+
+    private func clueSection(title: String, clues: [CrosswordClue]) -> some View {
+        Section {
+            clueList(clues: clues)
+        } header: {
             Text(title)
                 .font(.system(size: 24, weight: .semibold, design: .serif))
-
-            LazyVStack(alignment: .leading, spacing: 8) {
-                ForEach(clues) { clue in
-                    Button {
-                        game.selectClue(clue)
-                        isKeyboardFocused = true
-                    } label: {
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("\(clue.number)")
-                                .font(.footnote.weight(.bold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 28, alignment: .leading)
-
-                            Text(clue.prompt)
-                                .font(.body)
-                                .multilineTextAlignment(.leading)
-
-                            Spacer(minLength: 0)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(clue.id == game.currentClue?.id ? Color.primary.opacity(0.08) : Color(uiColor: .secondarySystemBackground))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 6)
+                .padding(.bottom, 10)
+                .padding(.horizontal, 4)
+                .background(.regularMaterial)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func clueList(clues: [CrosswordClue]) -> some View {
+        LazyVStack(alignment: .leading, spacing: 8) {
+            ForEach(clues) { clue in
+                Button {
+                    game.selectClue(clue)
+                    isKeyboardFocused = true
+                    inputPanelMode = .keyboard
+                    isClueSheetPresented = false
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("\(clue.number)")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28, alignment: .leading)
+
+                        Text(clue.prompt)
+                            .font(.body)
+                            .multilineTextAlignment(.leading)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(clue.id == game.currentClue?.id ? Color.primary.opacity(0.08) : Color(uiColor: .secondarySystemBackground))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
 }
@@ -228,7 +289,7 @@ private struct CrosswordCellView: View {
         ZStack(alignment: .topLeading) {
             if cell.isBlock {
                 Rectangle()
-                    .fill(Color.primary)
+                    .fill(Color(uiColor: .secondaryLabel).opacity(0.72))
             } else {
                 Rectangle()
                     .fill(backgroundColor)
