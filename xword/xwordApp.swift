@@ -9,9 +9,20 @@ import SwiftUI
 
 @main
 struct xwordApp: App {
+    @AppStorage(AppColorScheme.storageKey) private var colorSchemePreference = AppColorScheme.system.rawValue
+
+    init() {
+        CrosswordSettings.normalizeStoredMaximumGridDimension()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .preferredColorScheme(selectedColorScheme)
         }
+    }
+
+    private var selectedColorScheme: ColorScheme? {
+        AppColorScheme(rawValue: colorSchemePreference)?.preferredColorScheme
     }
 }

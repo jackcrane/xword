@@ -5,6 +5,27 @@
 
 import SwiftUI
 
+enum AppColorScheme: String, CaseIterable, Identifiable {
+    case system = "System"
+    case light = "Light"
+    case dark = "Dark"
+
+    static let storageKey = "appColorScheme"
+
+    var id: String { rawValue }
+
+    var preferredColorScheme: ColorScheme? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
+    }
+}
+
 enum InputPanelMode: String, CaseIterable, Identifiable {
     case keyboard = "Keyboard"
     case clues = "Clues"
@@ -15,6 +36,8 @@ enum InputPanelMode: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @StateObject private var game: CrosswordGame
+    @AppStorage(AppColorScheme.storageKey) private var colorSchemePreference = AppColorScheme.system.rawValue
+    @AppStorage(CrosswordSettings.maximumGridDimensionStorageKey) private var maximumGridDimension = CrosswordSettings.defaultMaximumGridDimension
     @State private var isKeyboardFocused = false
     @State private var inputPanelMode: InputPanelMode = .keyboard
     @State private var presentedSheet: InputPanelMode?
@@ -158,7 +181,8 @@ struct ContentView: View {
                             entry: game.entry(for: cell.coordinate),
                             size: cellSize,
                             isSelected: game.selectedCell == cell.coordinate,
-                            isHighlighted: highlightedCells.contains(cell.coordinate)
+                            isHighlighted: highlightedCells.contains(cell.coordinate),
+                            isIncorrect: game.showsIncorrectEntry(at: cell.coordinate)
                         ) {
                             game.selectCell(cell.coordinate)
                             isKeyboardFocused = !cell.isBlock
@@ -245,17 +269,55 @@ struct ContentView: View {
     }
 
     private var settingsSheet: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Settings")
-                .font(.system(size: 32, weight: .semibold, design: .serif))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
+        NavigationStack {
+            List {
+                Section("Appearance") {
+                    Picker("Color Scheme", selection: $colorSchemePreference) {
+                        ForEach(AppColorScheme.allCases) { scheme in
+                            Text(scheme.rawValue).tag(scheme.rawValue)
+                        }
+                    }
+                }
 
-            Spacer(minLength: 0)
+                Section("Puzzle") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Max crossword size")
+                            Spacer()
+                            Text("\(maximumGridDimension)")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Slider(
+                            value: Binding(
+                                get: { Double(maximumGridDimension) },
+                                set: { maximumGridDimension = Int($0.rounded()) }
+                            ),
+                            in: Double(CrosswordSettings.minimumGridDimension)...Double(CrosswordSettings.maximumGridDimension),
+                            step: 1
+                        )
+
+                        Text("Allow puzzles up to \(maximumGridDimension)x\(maximumGridDimension) cells.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section("Checking") {
+                    Toggle("Check as I type", isOn: $game.checkAsYouType)
+
+                    Button("Check now") {
+                        game.checkNow()
+                        presentedSheet = nil
+                        inputPanelMode = .keyboard
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.large)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(uiColor: .systemGroupedBackground))
         .presentationDetents([.large])
     }
 
@@ -314,6 +376,7 @@ private struct CrosswordCellView: View {
     let size: CGFloat
     let isSelected: Bool
     let isHighlighted: Bool
+    let isIncorrect: Bool
     let onTap: () -> Void
 
     var body: some View {
@@ -333,7 +396,7 @@ private struct CrosswordCellView: View {
 
                 Text(entry)
                     .font(.system(size: size * 0.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(isIncorrect ? .red : .primary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if let number = cell.number {

@@ -7,12 +7,34 @@ import Combine
 import Foundation
 
 enum CrosswordSettings {
-    static let maximumGridDimension = 20
+    static let defaultMaximumGridDimension = 20
+    static let minimumGridDimension = 15
+    static let maximumGridDimension = 30
+    static let maximumGridDimensionStorageKey = "maximumGridDimension"
+
+    static var currentMaximumGridDimension: Int {
+        let storedValue = UserDefaults.standard.integer(forKey: maximumGridDimensionStorageKey)
+        if storedValue == 0 {
+            return defaultMaximumGridDimension
+        }
+
+        return min(max(storedValue, minimumGridDimension), maximumGridDimension)
+    }
+
+    static func normalizeStoredMaximumGridDimension() {
+        let storedValue = UserDefaults.standard.integer(forKey: maximumGridDimensionStorageKey)
+        guard storedValue != 0, storedValue < minimumGridDimension else {
+            return
+        }
+
+        UserDefaults.standard.set(minimumGridDimension, forKey: maximumGridDimensionStorageKey)
+    }
 }
 
 extension CrosswordSettings {
     static func supports(_ puzzle: CrosswordPuzzle) -> Bool {
-        puzzle.width <= maximumGridDimension && puzzle.height <= maximumGridDimension
+        let limit = currentMaximumGridDimension
+        return puzzle.width <= limit && puzzle.height <= limit
     }
 }
 
@@ -24,6 +46,8 @@ final class CrosswordGame: ObservableObject {
     @Published private(set) var selectedDirection: CrosswordDirection = .across
     @Published private(set) var errorMessage: String?
     @Published private(set) var isLoading = false
+    @Published var checkAsYouType = false
+    @Published private(set) var checkedCells: Set<CrosswordCoordinate> = []
 
     private static let puzzleURLs = discoverPuzzleURLs()
 
@@ -87,8 +111,10 @@ final class CrosswordGame: ObservableObject {
 
                 let parsedPuzzle = try await Task.detached(priority: .userInitiated) {
                     for url in Self.puzzleURLs.shuffled() {
-                        let contents = try String(contentsOf: url, encoding: .utf8)
-                        let puzzle = try CrosswordParser().parse(contents: contents)
+                        guard let contents = try? String(contentsOf: url, encoding: .utf8),
+                              let puzzle = try? CrosswordParser().parse(contents: contents) else {
+                            continue
+                        }
 
                         guard CrosswordSettings.supports(puzzle) else {
                             continue
@@ -100,7 +126,7 @@ final class CrosswordGame: ObservableObject {
                     throw NSError(
                         domain: "xword",
                         code: 2,
-                        userInfo: [NSLocalizedDescriptionKey: "No puzzles were found at or under \(CrosswordSettings.maximumGridDimension)x\(CrosswordSettings.maximumGridDimension)."]
+                        userInfo: [NSLocalizedDescriptionKey: "No puzzles were found at or under \(CrosswordSettings.currentMaximumGridDimension)x\(CrosswordSettings.currentMaximumGridDimension)."]
                     )
                 }.value
 
@@ -148,6 +174,7 @@ final class CrosswordGame: ObservableObject {
         }
 
         entries[selectedCell] = character
+        checkedCells.remove(selectedCell)
         moveForward()
     }
 
@@ -158,13 +185,54 @@ final class CrosswordGame: ObservableObject {
 
         if !(entries[selectedCell, default: ""].isEmpty) {
             entries[selectedCell] = ""
+            checkedCells.remove(selectedCell)
             return
         }
 
         moveBackward()
         if let selectedCell = self.selectedCell {
             entries[selectedCell] = ""
+            checkedCells.remove(selectedCell)
         }
+    }
+
+    func checkNow() {
+        guard let puzzle else {
+            checkedCells = []
+            return
+        }
+
+        checkedCells = Set(
+            puzzle.playableCells.compactMap { cell in
+                guard
+                    let solution = cell.solution,
+                    let entry = entries[cell.coordinate],
+                    !entry.isEmpty,
+                    entry != solution
+                else {
+                    return nil
+                }
+
+                return cell.coordinate
+            }
+        )
+    }
+
+    func showsIncorrectEntry(at coordinate: CrosswordCoordinate) -> Bool {
+        if checkAsYouType {
+            guard
+                let puzzle,
+                let solution = puzzle.cell(at: coordinate)?.solution,
+                let entry = entries[coordinate],
+                !entry.isEmpty
+            else {
+                return false
+            }
+
+            return entry != solution
+        }
+
+        return checkedCells.contains(coordinate)
     }
 
     func isSelected(_ coordinate: CrosswordCoordinate) -> Bool {
@@ -253,6 +321,7 @@ final class CrosswordGame: ObservableObject {
         entries = Dictionary(uniqueKeysWithValues: puzzle.playableCells.map { ($0.coordinate, "") })
         selectedDirection = .across
         selectedCell = puzzle.acrossClues.first?.cells.first ?? puzzle.playableCells.first?.coordinate
+        checkedCells = []
     }
 
     private static func discoverPuzzleURLs() -> [URL] {

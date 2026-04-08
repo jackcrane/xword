@@ -6,7 +6,6 @@
 import Foundation
 
 enum CrosswordParserError: LocalizedError {
-    case missingTitle
     case missingGrid
     case inconsistentGrid
     case malformedClue(String)
@@ -14,8 +13,6 @@ enum CrosswordParserError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingTitle:
-            return "The crossword is missing a title."
         case .missingGrid:
             return "The crossword grid could not be found."
         case .inconsistentGrid:
@@ -29,6 +26,8 @@ enum CrosswordParserError: LocalizedError {
 }
 
 struct CrosswordParser {
+    private static let fallbackTitle = "Crossword"
+
     func parse(contents: String) throws -> CrosswordPuzzle {
         let normalized = contents
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -48,9 +47,8 @@ struct CrosswordParser {
             index += 1
         }
 
-        guard let title = metadata["Title"], !title.isEmpty else {
-            throw CrosswordParserError.missingTitle
-        }
+        let title = metadata["Title"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = (title?.isEmpty == false) ? title! : Self.fallbackTitle
 
         while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
             index += 1
@@ -195,7 +193,7 @@ struct CrosswordParser {
         }
 
         return CrosswordPuzzle(
-            title: title,
+            title: resolvedTitle,
             width: width,
             height: height,
             grid: grid,
