@@ -29,56 +29,24 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if let puzzle = game.puzzle {
-                    GeometryReader { geometry in
-                        let contentWidth = max(1, geometry.size.width - 24)
-
-                        VStack(alignment: .leading, spacing: 18) {
-                            header
-                            board(for: puzzle, width: contentWidth)
-                            currentClueCard
-
-                            ScrollView {
-                                clueSections(for: puzzle)
-                                    .padding(.bottom, 20)
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 20)
-                        .padding(.bottom, 8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .onAppear {
-                            if game.selectedCell != nil {
-                                isKeyboardFocused = true
-                            }
-                        }
-                    }
-                } else if game.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ContentUnavailableView(
-                        "Crossword Unavailable",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(game.errorMessage ?? "The puzzle could not be loaded.")
-                    )
-                }
-            }
+            content
             .background(Color(uiColor: .systemGroupedBackground))
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if game.selectedCell != nil && isKeyboardFocused {
-                    KeyboardInputView(
-                        isFocused: $isKeyboardFocused,
-                        selectedMode: $inputPanelMode,
-                        onInsertText: { text in
-                            game.insert(text: text)
-                        },
-                        onDeleteBackward: {
-                            game.deleteSelectedEntry()
-                        }
-                    )
+                    VStack(spacing: 0) {
+                        currentClueBanner
+                        KeyboardInputView(
+                            isFocused: $isKeyboardFocused,
+                            selectedMode: $inputPanelMode,
+                            onInsertText: { text in
+                                game.insert(text: text)
+                            },
+                            onDeleteBackward: {
+                                game.deleteSelectedEntry()
+                            }
+                        )
+                    }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -96,6 +64,42 @@ struct ContentView: View {
             }) {
                 if let puzzle = game.puzzle {
                     clueSheet(for: puzzle)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let puzzle = game.puzzle {
+            puzzleContent(for: puzzle)
+        } else if game.isLoading {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView(
+                "Crossword Unavailable",
+                systemImage: "exclamationmark.triangle",
+                description: Text(game.errorMessage ?? "The puzzle could not be loaded.")
+            )
+        }
+    }
+
+    private func puzzleContent(for puzzle: CrosswordPuzzle) -> some View {
+        GeometryReader { geometry in
+            let contentWidth = max(1, geometry.size.width - 24)
+
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                board(for: puzzle, width: contentWidth)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 20)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onAppear {
+                if game.selectedCell != nil {
+                    isKeyboardFocused = true
                 }
             }
         }
@@ -164,51 +168,21 @@ struct ContentView: View {
         .frame(width: width, height: boardHeight + (borderWidth * 2), alignment: .topLeading)
     }
 
-    private var currentClueCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(game.currentClue?.label ?? "No clue selected")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                if game.currentClue != nil {
-                    Button(game.selectedDirection == .across ? "Down" : "Across") {
-                        game.toggleDirection()
-                        isKeyboardFocused = true
-                    }
-                    .font(.subheadline.weight(.medium))
-                }
-            }
-
+    private var currentClueBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(game.currentClue?.label ?? "No clue selected")
+                .font(.headline)
+                .foregroundStyle(.secondary)
             Text(game.currentClue?.prompt ?? "Tap a square to begin.")
                 .font(.title3.weight(.semibold))
-
-            Text(game.completionText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemBackground))
-        )
-    }
-
-    private func clueSections(for puzzle: CrosswordPuzzle) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Across")
-                    .font(.system(size: 24, weight: .semibold, design: .serif))
-                clueList(clues: puzzle.acrossClues)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Down")
-                    .font(.system(size: 24, weight: .semibold, design: .serif))
-                clueList(clues: puzzle.downClues)
-            }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Divider()
         }
     }
 
