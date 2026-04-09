@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum CrosswordDirection: String, CaseIterable, Hashable {
+enum CrosswordDirection: String, CaseIterable, Hashable, Codable {
     case across
     case down
 
@@ -52,6 +52,7 @@ struct CrosswordClue: Identifiable, Hashable {
 }
 
 struct CrosswordPuzzle {
+    let sourceID: String
     let title: String
     let width: Int
     let height: Int

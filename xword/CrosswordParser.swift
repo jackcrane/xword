@@ -28,7 +28,7 @@ enum CrosswordParserError: LocalizedError {
 struct CrosswordParser {
     private static let fallbackTitle = "Crossword"
 
-    func parse(contents: String) throws -> CrosswordPuzzle {
+    func parse(contents: String, sourceID: String = UUID().uuidString) throws -> CrosswordPuzzle {
         let normalized = contents
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -193,6 +193,7 @@ struct CrosswordParser {
         }
 
         return CrosswordPuzzle(
+            sourceID: sourceID,
             title: resolvedTitle,
             width: width,
             height: height,

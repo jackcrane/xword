@@ -6,6 +6,7 @@
 import SwiftUI
 import CoreImage.CIFilterBuiltins
 import UIKit
+import AVFoundation
 
 enum AppColorScheme: String, CaseIterable, Identifiable {
     case system = "System"
@@ -47,6 +48,7 @@ struct ContentView: View {
     @State private var clueTransitionDirection: HorizontalEdge = .trailing
     @State private var multiplayerMode: MultiplayerSheetMode = .join
     @State private var multiplayerJoinPin = ""
+    @State private var isShowingQRScanner = false
 
     @MainActor
     init() {
@@ -62,6 +64,13 @@ struct ContentView: View {
             content
             .background(Color(uiColor: .systemGroupedBackground))
             .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .top) {
+                if let toast = game.multiplayerToast {
+                    ToastBanner(message: toast.message)
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if game.selectedCell != nil && isKeyboardFocused {
                     VStack(spacing: 0) {
@@ -83,6 +92,11 @@ struct ContentView: View {
             .animation(.easeOut(duration: 0.18), value: isKeyboardFocused)
             .onChange(of: game.selectedCell) { _, newValue in
                 isKeyboardFocused = newValue != nil
+            }
+            .onChange(of: game.multiplayerDismissSequence) { _, _ in
+                presentedSheet = nil
+                inputPanelMode = .keyboard
+                isKeyboardFocused = game.selectedCell != nil
             }
             .onChange(of: inputPanelMode) { _, newValue in
                 switch newValue {
@@ -149,20 +163,22 @@ struct ContentView: View {
 
             Spacer()
 
-            Menu {
-                Section {
-                    Button("New Puzzle") {
-                        isKeyboardFocused = false
-                        game.loadRandomPuzzle()
+            if game.canLoadNewPuzzle {
+                Menu {
+                    Section {
+                        Button("New Puzzle") {
+                            isKeyboardFocused = false
+                            game.loadRandomPuzzle()
+                        }
                     }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 36, height: 36)
-                    .contentShape(Rectangle())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 4)
     }
@@ -189,6 +205,8 @@ struct ContentView: View {
                             size: cellSize,
                             isSelected: game.selectedCell == cell.coordinate,
                             isHighlighted: highlightedCells.contains(cell.coordinate),
+                            remoteSelectedColor: game.remoteSelectedColor(at: cell.coordinate)?.swiftUIColor,
+                            remoteHighlightedColor: game.remoteHighlightedColor(at: cell.coordinate)?.swiftUIColor,
                             isIncorrect: game.showsIncorrectEntry(at: cell.coordinate)
                         ) {
                             game.selectCell(cell.coordinate)
@@ -341,27 +359,51 @@ struct ContentView: View {
     }
 
     private var multiplayerSheetContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Picker("Multiplayer Mode", selection: $multiplayerMode) {
-                    Text("Join").tag(MultiplayerSheetMode.join)
-                    Text("Host").tag(MultiplayerSheetMode.host)
-                }
-                .pickerStyle(.segmented)
+        Group {
+            if game.isJoinedLobby {
+                joinedLobbyView
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Picker("Multiplayer Mode", selection: $multiplayerMode) {
+                            Text(game.hasConnectedGuests ? "Lobby" : "Join").tag(MultiplayerSheetMode.join)
+                            Text("Host").tag(MultiplayerSheetMode.host)
+                        }
+                        .pickerStyle(.segmented)
 
-                switch multiplayerMode {
-                case .join:
-                    multiplayerJoinView
-                case .host:
-                    multiplayerHostView
+                        switch multiplayerMode {
+                        case .join:
+                            if game.hasConnectedGuests {
+                                hostLobbyView
+                            } else {
+                                multiplayerJoinView
+                            }
+                        case .host:
+                            multiplayerHostView
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 28)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color.clear)
+        .sheet(isPresented: $isShowingQRScanner) {
+            QRScannerView { scannedValue in
+                let formatted = formatScannedMultiplayerPin(scannedValue)
+                guard isValidMultiplayerPin(formatted) else {
+                    return
+                }
+
+                multiplayerJoinPin = formatted
+                isShowingQRScanner = false
+                game.joinLobby(pin: formatted)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationBackground(.ultraThinMaterial)
+        }
         .onChange(of: multiplayerJoinPin) { _, newValue in
             let formatted = formatMultiplayerPinInput(newValue)
             if formatted != newValue {
@@ -400,12 +442,15 @@ struct ContentView: View {
                             .stroke(Color(uiColor: .separator).opacity(0.35), lineWidth: 1)
                     }
 
-                Button("Join") {
+                Button {
                     game.joinLobby(pin: multiplayerJoinPin)
+                } label: {
+                    Text("Join")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .contentShape(Rectangle())
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(isValidMultiplayerJoinPin ? Color.accentColor : Color.white.opacity(0.12))
@@ -422,11 +467,13 @@ struct ContentView: View {
                 }
 
                 Button {
+                    isShowingQRScanner = true
                 } label: {
                     Label("Scan a QR", systemImage: "qrcode.viewfinder")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
+                        .contentShape(Rectangle())
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -477,6 +524,7 @@ struct ContentView: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
+                        .contentShape(Rectangle())
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -489,6 +537,70 @@ struct ContentView: View {
         .onAppear {
             game.connectAsHost()
         }
+    }
+
+    private var hostLobbyView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Lobby")
+                .font(.title3.weight(.semibold))
+
+            VStack(spacing: 12) {
+                ForEach(Array(game.orderedLobbyPlayers.enumerated()), id: \.element.id) { index, player in
+                    playerLobbyRow(player: player, index: index)
+                }
+            }
+
+            Color.clear.frame(height: 8)
+
+            Button {
+                game.endLobby()
+            } label: {
+                Text("End lobby")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.red.opacity(0.16))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.red.opacity(0.35), lineWidth: 1)
+            }
+            .foregroundStyle(.red)
+        }
+    }
+
+    private var joinedLobbyView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("You're connected to a lobby.")
+                .font(.title3.weight(.semibold))
+
+            Button {
+                game.leaveLobby()
+            } label: {
+                Text("Leave lobby")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.red.opacity(0.16))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.red.opacity(0.35), lineWidth: 1)
+            }
+            .foregroundStyle(.red)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func multiplayerOptionSection<Content: View>(
@@ -509,6 +621,38 @@ struct ContentView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func playerLobbyRow(player: MultiplayerLobbyPlayer, index: Int) -> some View {
+        let isLocalPlayer = player.id == game.multiplayerLocalPlayerID
+        let title = isLocalPlayer ? "Player \(index + 1) (you)" : "Player \(index + 1)"
+        let backgroundColor = game.lobbyRowColor(for: player)
+
+        return HStack {
+            Text(title)
+                .font(.headline)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(backgroundColor.opacity(0.2))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(backgroundColor.opacity(0.45), lineWidth: 1)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if game.isHostingLobby && !isLocalPlayer {
+                Button(role: .destructive) {
+                    game.kick(playerID: player.id)
+                } label: {
+                    Text("Kick")
+                }
+            }
+        }
     }
 
     private var isValidMultiplayerJoinPin: Bool {
@@ -538,6 +682,18 @@ struct ContentView: View {
 
         let allowedCharacters = Set("23456789ABCDEFGHJKMNPQRSTVWXYZ")
         return components.joined().allSatisfy { allowedCharacters.contains($0) }
+    }
+
+    private func formatScannedMultiplayerPin(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let url = URL(string: trimmed),
+           let candidate = url.pathComponents.last,
+           isValidMultiplayerPin(candidate.uppercased()) {
+            return candidate.uppercased()
+        }
+
+        return formatMultiplayerPinInput(trimmed)
     }
 
     private func clueSection(title: String, clues: [CrosswordClue]) -> some View {
@@ -602,6 +758,8 @@ private struct CrosswordCellView: View {
     let size: CGFloat
     let isSelected: Bool
     let isHighlighted: Bool
+    let remoteSelectedColor: Color?
+    let remoteHighlightedColor: Color?
     let isIncorrect: Bool
     let onTap: () -> Void
 
@@ -647,14 +805,128 @@ private struct CrosswordCellView: View {
 
     private var backgroundColor: Color {
         if isSelected {
-            return Color.accentColor.opacity(0.5)
+            return MultiplayerPlayerColor.localPlayer.opacity(0.52)
         }
 
         if isHighlighted {
-            return Color.accentColor.opacity(0.18)
+            return MultiplayerPlayerColor.localPlayer.opacity(0.18)
+        }
+
+        if let remoteSelectedColor {
+            return remoteSelectedColor.opacity(0.46)
+        }
+
+        if let remoteHighlightedColor {
+            return remoteHighlightedColor.opacity(0.18)
         }
 
         return Color(uiColor: .systemBackground)
+    }
+}
+
+private struct ToastBanner: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.black.opacity(0.82))
+            )
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 8)
+    }
+}
+
+private struct QRScannerView: UIViewControllerRepresentable {
+    let onScan: (String) -> Void
+
+    func makeUIViewController(context: Context) -> QRScannerViewController {
+        let controller = QRScannerViewController()
+        controller.onScan = onScan
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: QRScannerViewController, context: Context) {
+        uiViewController.onScan = onScan
+    }
+}
+
+private final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onScan: ((String) -> Void)?
+
+    private let captureSession = AVCaptureSession()
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var hasScanned = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        configureCaptureSession()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.bounds
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if !captureSession.isRunning {
+            captureSession.startRunning()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if captureSession.isRunning {
+            captureSession.stopRunning()
+        }
+    }
+
+    private func configureCaptureSession() {
+        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video),
+              let videoInput = try? AVCaptureDeviceInput(device: videoCaptureDevice),
+              captureSession.canAddInput(videoInput) else {
+            return
+        }
+
+        captureSession.addInput(videoInput)
+
+        let metadataOutput = AVCaptureMetadataOutput()
+        guard captureSession.canAddOutput(metadataOutput) else {
+            return
+        }
+
+        captureSession.addOutput(metadataOutput)
+        metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+        metadataOutput.metadataObjectTypes = [.qr]
+
+        let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+        previewLayer.videoGravity = .resizeAspectFill
+        previewLayer.frame = view.layer.bounds
+        view.layer.addSublayer(previewLayer)
+        self.previewLayer = previewLayer
+    }
+
+    func metadataOutput(
+        _ output: AVCaptureMetadataOutput,
+        didOutput metadataObjects: [AVMetadataObject],
+        from connection: AVCaptureConnection
+    ) {
+        guard !hasScanned,
+              let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              metadataObject.type == .qr,
+              let scanned = metadataObject.stringValue else {
+            return
+        }
+
+        hasScanned = true
+        captureSession.stopRunning()
+        onScan?(scanned)
     }
 }
 
