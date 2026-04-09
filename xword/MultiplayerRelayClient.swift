@@ -13,7 +13,7 @@ final class MultiplayerRelayClient: NSObject {
     }
 
     private enum Configuration {
-        static let relayBaseURL = URL(string: "ws://127.0.0.1:8787")!
+        static let relayBaseURL = URL(string: "wss://xword-relay.built-by-cdp.com")!
     }
 
     private lazy var session: URLSession = {
