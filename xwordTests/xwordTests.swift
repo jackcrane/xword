@@ -183,6 +183,36 @@ struct xwordTests {
         #expect(game.selectedCell == CrosswordCoordinate(row: 2, column: 0))
     }
 
+    @MainActor
+    @Test func solvePuzzleFillsAllEntriesWithSolutions() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(puzzle: puzzle, entries: [:])
+
+        game.solvePuzzle()
+
+        for cell in puzzle.playableCells {
+            #expect(game.entry(for: cell.coordinate) == cell.solution)
+        }
+    }
+
     private func sampleURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

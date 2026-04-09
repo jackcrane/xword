@@ -117,6 +117,16 @@ struct ContentView: View {
                     settingsSheet
                 }
             }
+            .sheet(isPresented: Binding(
+                get: { game.isShowingCompletionSheet },
+                set: { if !$0 { game.dismissCompletionSheet() } }
+            )) {
+                completionSheet
+            }
+            .onOpenURL { url in
+                multiplayerJoinPin = formatScannedMultiplayerPin(url.absoluteString)
+                game.handleDeepLink(url)
+            }
         }
     }
 
@@ -160,6 +170,10 @@ struct ContentView: View {
         HStack(alignment: .firstTextBaseline) {
             Text("Crossword")
                 .font(.system(size: 36, weight: .semibold, design: .serif))
+                .contentShape(Rectangle())
+                .onTapGesture(count: 10) {
+                    game.solvePuzzle()
+                }
 
             Spacer()
 
@@ -519,19 +533,21 @@ struct ContentView: View {
             Divider()
 
             multiplayerOptionSection(title: "Send a link", subtitle: "Send a one-tap join link to someone") {
-                ShareLink(item: game.multiplayerLobbyPin) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .contentShape(Rectangle())
+                if let joinURL = game.multiplayerJoinURL {
+                    ShareLink(item: joinURL) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .contentShape(Rectangle())
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.accentColor)
+                    )
+                    .foregroundStyle(.white)
+                    .buttonStyle(.plain)
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.accentColor)
-                )
-                .foregroundStyle(.white)
-                .buttonStyle(.plain)
             }
         }
         .onAppear {
@@ -688,7 +704,7 @@ struct ContentView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let url = URL(string: trimmed),
-           let candidate = url.pathComponents.last,
+           let candidate = url.queryParameters["pin"] ?? url.pathComponents.last,
            isValidMultiplayerPin(candidate.uppercased()) {
             return candidate.uppercased()
         }
@@ -741,6 +757,48 @@ struct ContentView: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private var completionSheet: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 64, weight: .semibold))
+                .foregroundStyle(.green)
+
+            VStack(spacing: 8) {
+                Text("Puzzle completed")
+                    .font(.system(size: 30, weight: .semibold, design: .serif))
+
+                Text("Everything checks out.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+
+            Button {
+                isKeyboardFocused = false
+                presentedSheet = nil
+                inputPanelMode = .keyboard
+                game.loadNextPuzzleFromCompletionSheet()
+            } label: {
+                Text("Start a new puzzle")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.accentColor)
+            )
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 28)
+        .padding(.bottom, 24)
+        .presentationDetents([.fraction(0.34)])
+        .presentationDragIndicator(.visible)
     }
 
 }
@@ -964,6 +1022,16 @@ private struct QRCodeView: View {
         }
 
         return UIImage(cgImage: cgImage)
+    }
+}
+
+private extension URL {
+    var queryParameters: [String: String] {
+        URLComponents(url: self, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .reduce(into: [:]) { partialResult, item in
+                partialResult[item.name.lowercased()] = item.value
+            } ?? [:]
     }
 }
 

@@ -4,6 +4,16 @@
 //
 
 import SwiftUI
+import UIKit
+
+private enum KeyboardHaptics {
+    static let keyPressGenerator = UIImpactFeedbackGenerator(style: .light)
+
+    static func keyPress() {
+        keyPressGenerator.impactOccurred(intensity: 0.75)
+        keyPressGenerator.prepare()
+    }
+}
 
 struct KeyboardInputView: View {
     @Binding var isFocused: Bool
@@ -50,6 +60,9 @@ struct KeyboardInputView: View {
         .padding(.top, 10)
         .padding(.bottom, 8)
         .background(.ultraThinMaterial)
+        .onAppear {
+            KeyboardHaptics.keyPressGenerator.prepare()
+        }
         .overlay(alignment: .top) {
             Divider()
         }
@@ -66,6 +79,7 @@ struct KeyboardInputView: View {
     private func letterKeys(_ letters: [String]) -> some View {
         ForEach(letters, id: \.self) { letter in
             key(letter) {
+                KeyboardHaptics.keyPress()
                 onInsertText(letter)
             }
         }
@@ -87,7 +101,10 @@ struct KeyboardInputView: View {
     }
 
     private func utilityKey(systemName: String, width: CGFloat, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button(action: {
+            KeyboardHaptics.keyPress()
+            action()
+        }) {
             Image(systemName: systemName)
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: width, height: 36)

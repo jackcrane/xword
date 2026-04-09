@@ -13,6 +13,7 @@ enum CrosswordSettings {
     static let maximumGridDimension = 30
     static let maximumGridDimensionStorageKey = "maximumGridDimension"
     static let multiplayerLobbyPinStorageKey = "multiplayerLobbyPin"
+    static let deepLinkScheme = "xword"
 
     static var currentMaximumGridDimension: Int {
         let storedValue = UserDefaults.standard.integer(forKey: maximumGridDimensionStorageKey)
@@ -56,6 +57,7 @@ final class CrosswordGame: ObservableObject {
     @Published private(set) var multiplayerLocalPlayerID: String?
     @Published private(set) var multiplayerToast: MultiplayerToast?
     @Published private(set) var multiplayerDismissSequence = 0
+    @Published private(set) var isShowingCompletionSheet = false
     @Published private var multiplayerRemoteSelections: [String: MultiplayerSelection] = [:]
 
     private struct PuzzleRecord: Sendable {
@@ -142,6 +144,14 @@ final class CrosswordGame: ObservableObject {
         multiplayerPlayers.sorted { $0.joinedAt < $1.joinedAt }
     }
 
+    var multiplayerJoinURL: URL? {
+        var components = URLComponents()
+        components.scheme = CrosswordSettings.deepLinkScheme
+        components.host = "join"
+        components.queryItems = [URLQueryItem(name: "pin", value: multiplayerLobbyPin)]
+        return components.url
+    }
+
     func entry(for coordinate: CrosswordCoordinate) -> String {
         entries[coordinate, default: ""]
     }
@@ -152,6 +162,11 @@ final class CrosswordGame: ObservableObject {
         }
 
         loadRandomPuzzleInternal(notifyPeers: isHostingLobby)
+    }
+
+    func loadNextPuzzleFromCompletionSheet() {
+        isShowingCompletionSheet = false
+        loadRandomPuzzle()
     }
 
     func selectCell(_ coordinate: CrosswordCoordinate) {
@@ -192,6 +207,7 @@ final class CrosswordGame: ObservableObject {
         broadcastEntryUpdate(for: selectedCell)
         moveForward()
         broadcastSelectionIfNeeded()
+        evaluatePuzzleCompletion()
     }
 
     func deleteSelectedEntry() {
@@ -203,6 +219,7 @@ final class CrosswordGame: ObservableObject {
             setEntry("", at: selectedCell)
             checkedCells.remove(selectedCell)
             broadcastEntryUpdate(for: selectedCell)
+            isShowingCompletionSheet = false
             return
         }
 
@@ -212,6 +229,7 @@ final class CrosswordGame: ObservableObject {
             checkedCells.remove(selectedCell)
             broadcastEntryUpdate(for: selectedCell)
             broadcastSelectionIfNeeded()
+            isShowingCompletionSheet = false
         }
     }
 
@@ -252,6 +270,44 @@ final class CrosswordGame: ObservableObject {
         }
 
         return checkedCells.contains(coordinate)
+    }
+
+    func solvePuzzle() {
+        guard let puzzle else {
+            return
+        }
+
+        var updatedEntries = entries
+        for cell in puzzle.playableCells {
+            guard let solution = cell.solution else {
+                continue
+            }
+
+            updatedEntries[cell.coordinate] = solution
+        }
+
+        entries = updatedEntries
+        checkedCells = []
+
+        if isInLobby {
+            for coordinate in puzzle.playableCells.map(\.coordinate) {
+                broadcastEntryUpdate(for: coordinate)
+            }
+        }
+
+        evaluatePuzzleCompletion()
+    }
+
+    func handleDeepLink(_ url: URL) {
+        guard let pin = Self.multiplayerPin(from: url) else {
+            return
+        }
+
+        joinLobby(pin: pin)
+    }
+
+    func dismissCompletionSheet() {
+        isShowingCompletionSheet = false
     }
 
     func connectAsHost() {
@@ -510,9 +566,29 @@ final class CrosswordGame: ObservableObject {
         }
 
         checkedCells = []
+        isShowingCompletionSheet = false
         if clearRemoteSelections {
             multiplayerRemoteSelections = [:]
         }
+    }
+
+    private func evaluatePuzzleCompletion() {
+        guard let puzzle else {
+            isShowingCompletionSheet = false
+            return
+        }
+
+        let isFilled = puzzle.playableCells.allSatisfy { cell in
+            !(entries[cell.coordinate, default: ""].isEmpty)
+        }
+
+        guard isFilled else {
+            isShowingCompletionSheet = false
+            return
+        }
+
+        checkNow()
+        isShowingCompletionSheet = checkedCells.isEmpty
     }
 
     private func sendStateSnapshot(targetPlayerID: String? = nil) {
@@ -577,6 +653,7 @@ final class CrosswordGame: ObservableObject {
     private func applyRemoteEntry(_ entry: MultiplayerEntrySnapshot) {
         setEntry(entry.value, at: entry.coordinate)
         checkedCells.remove(entry.coordinate)
+        isShowingCompletionSheet = false
     }
 
     private func applyRemoteStateSnapshot(_ snapshot: MultiplayerStateSnapshot, fromPlayerID: String) {
@@ -719,6 +796,35 @@ final class CrosswordGame: ObservableObject {
 
         let allowedCharacters = Set(multiplayerPinAlphabet)
         return components.joined().allSatisfy { allowedCharacters.contains($0) }
+    }
+
+    nonisolated private static func multiplayerPin(from url: URL) -> String? {
+        guard url.scheme?.caseInsensitiveCompare(CrosswordSettings.deepLinkScheme) == .orderedSame else {
+            return nil
+        }
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let host = url.host?.lowercased()
+        let pathPin = url.pathComponents.dropFirst().first?.uppercased()
+        let queryPin = components?.queryItems?
+            .first(where: { $0.name.caseInsensitiveCompare("pin") == .orderedSame })?
+            .value?
+            .uppercased()
+
+        let candidate: String?
+        if host == "join" {
+            candidate = queryPin ?? pathPin
+        } else if host == nil || host?.isEmpty == true {
+            candidate = pathPin ?? queryPin
+        } else {
+            candidate = nil
+        }
+
+        guard let candidate, isValidMultiplayerLobbyPin(candidate) else {
+            return nil
+        }
+
+        return candidate
     }
 
     private func normalizedInput(from value: String) -> String? {
