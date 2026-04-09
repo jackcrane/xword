@@ -255,10 +255,12 @@ final class CrosswordGame: ObservableObject {
     }
 
     func connectAsHost() {
+        print("[MultiplayerRelay] Host connect requested for lobby \(multiplayerLobbyPin)")
         multiplayerRelayClient.connect(pin: multiplayerLobbyPin, role: .host)
     }
 
     func joinLobby(pin: String) {
+        print("[MultiplayerRelay] Join connect requested for lobby \(pin)")
         multiplayerRelayClient.connect(pin: pin, role: .join)
     }
 
@@ -515,6 +517,7 @@ final class CrosswordGame: ObservableObject {
 
     private func sendStateSnapshot(targetPlayerID: String? = nil) {
         guard isHostingLobby, let puzzle else {
+            print("[MultiplayerRelay] Skipped state snapshot send because host state was unavailable")
             return
         }
 
@@ -526,6 +529,10 @@ final class CrosswordGame: ObservableObject {
             selection: selectedCell.map { MultiplayerSelection(coordinate: $0, direction: selectedDirection) }
         )
 
+        let targetDescription = targetPlayerID ?? "all players"
+        print(
+            "[MultiplayerRelay] Sending state snapshot to \(targetDescription) puzzle=\(snapshot.puzzleID) entries=\(snapshot.entries.count) selection=\(snapshot.selection != nil)"
+        )
         multiplayerRelayClient.sendRelayEvent(.stateSnapshot(snapshot), targetPlayerID: targetPlayerID)
     }
 
@@ -573,6 +580,10 @@ final class CrosswordGame: ObservableObject {
     }
 
     private func applyRemoteStateSnapshot(_ snapshot: MultiplayerStateSnapshot, fromPlayerID: String) {
+        print(
+            "[MultiplayerRelay] Applying state snapshot from \(fromPlayerID) puzzle=\(snapshot.puzzleID) entries=\(snapshot.entries.count) currentPuzzle=\(puzzle?.sourceID ?? "none")"
+        )
+
         if puzzle?.sourceID == snapshot.puzzleID {
             let entryMap = Dictionary(uniqueKeysWithValues: snapshot.entries.map { ($0.coordinate, $0.value) })
             if let puzzle {
@@ -582,7 +593,9 @@ final class CrosswordGame: ObservableObject {
             }
             checkedCells = []
             multiplayerRemoteSelections[fromPlayerID] = snapshot.selection
+            print("[MultiplayerRelay] Applied state snapshot onto existing puzzle")
         } else {
+            print("[MultiplayerRelay] Loading puzzle \(snapshot.puzzleID) from snapshot")
             loadPuzzle(withID: snapshot.puzzleID, entries: snapshot.entries, selection: snapshot.selection, preserveRemoteSelections: false)
             multiplayerRemoteSelections[fromPlayerID] = snapshot.selection
         }
@@ -674,6 +687,10 @@ final class CrosswordGame: ObservableObject {
     nonisolated private static func puzzleIdentifier(for url: URL) -> String {
         let standardizedPath = url.standardizedFileURL.path
 
+        if let range = standardizedPath.range(of: ".app/") {
+            return String(standardizedPath[range.upperBound...])
+        }
+
         if let range = standardizedPath.range(of: "/Resources/data/") {
             return String(standardizedPath[range.upperBound...])
         }
@@ -722,6 +739,8 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
             multiplayerRole = role
             updateRoster(players)
             if role == .join {
+                print("[MultiplayerRelay] Requesting host snapshot after join welcome")
+                multiplayerRelayClient.sendRelayEvent(.snapshotRequested)
                 requestDismissToKeyboard()
                 showToast("Successfully joined the room")
             }
@@ -735,6 +754,10 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
                 return
             }
 
+            if isHostingLobby {
+                sendStateSnapshot(targetPlayerID: playerID)
+            }
+
             showToast("Someone joined the room")
 
         case .relayed(let fromPlayerID, let relayEvent):
@@ -742,9 +765,15 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
                 return
             }
 
+            print("[MultiplayerRelay] Received relay event \(relayEvent.debugName) from \(fromPlayerID)")
             switch relayEvent {
             case .stateSnapshot(let snapshot):
                 applyRemoteStateSnapshot(snapshot, fromPlayerID: fromPlayerID)
+            case .snapshotRequested:
+                if isHostingLobby {
+                    print("[MultiplayerRelay] Received snapshot request from \(fromPlayerID)")
+                    sendStateSnapshot(targetPlayerID: fromPlayerID)
+                }
             case .selectionUpdated(let selection):
                 multiplayerRemoteSelections[fromPlayerID] = selection
             case .entryUpdated(let entry):

@@ -88,18 +88,21 @@ struct MultiplayerToast: Identifiable, Equatable {
 
 enum MultiplayerRelayEvent: Codable, Equatable {
     case stateSnapshot(MultiplayerStateSnapshot)
+    case snapshotRequested
     case selectionUpdated(MultiplayerSelection?)
     case entryUpdated(MultiplayerEntrySnapshot)
 
     enum CodingKeys: String, CodingKey {
         case type
         case snapshot
+        case snapshotRequest
         case selection
         case entry
     }
 
     enum Kind: String, Codable {
         case stateSnapshot
+        case snapshotRequested
         case selectionUpdated
         case entryUpdated
     }
@@ -111,6 +114,8 @@ enum MultiplayerRelayEvent: Codable, Equatable {
         switch kind {
         case .stateSnapshot:
             self = .stateSnapshot(try container.decode(MultiplayerStateSnapshot.self, forKey: .snapshot))
+        case .snapshotRequested:
+            self = .snapshotRequested
         case .selectionUpdated:
             self = .selectionUpdated(try container.decodeIfPresent(MultiplayerSelection.self, forKey: .selection))
         case .entryUpdated:
@@ -125,12 +130,27 @@ enum MultiplayerRelayEvent: Codable, Equatable {
         case .stateSnapshot(let snapshot):
             try container.encode(Kind.stateSnapshot, forKey: .type)
             try container.encode(snapshot, forKey: .snapshot)
+        case .snapshotRequested:
+            try container.encode(Kind.snapshotRequested, forKey: .type)
         case .selectionUpdated(let selection):
             try container.encode(Kind.selectionUpdated, forKey: .type)
             try container.encodeIfPresent(selection, forKey: .selection)
         case .entryUpdated(let entry):
             try container.encode(Kind.entryUpdated, forKey: .type)
             try container.encode(entry, forKey: .entry)
+        }
+    }
+
+    var debugName: String {
+        switch self {
+        case .stateSnapshot:
+            return "stateSnapshot"
+        case .snapshotRequested:
+            return "snapshotRequested"
+        case .selectionUpdated:
+            return "selectionUpdated"
+        case .entryUpdated:
+            return "entryUpdated"
         }
     }
 }

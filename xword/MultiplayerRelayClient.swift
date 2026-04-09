@@ -134,7 +134,7 @@ final class MultiplayerRelayClient: NSObject {
         activeRole = role
         webSocketTask = task
         task.resume()
-        receiveNextMessage()
+        receiveNextMessage(for: task)
     }
 
     func disconnect() {
@@ -177,8 +177,8 @@ final class MultiplayerRelayClient: NSObject {
         }
     }
 
-    private func receiveNextMessage() {
-        webSocketTask?.receive { [weak self] result in
+    private func receiveNextMessage(for task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
             Task { @MainActor [weak self] in
                 guard let self else {
                     return
@@ -186,9 +186,19 @@ final class MultiplayerRelayClient: NSObject {
 
                 switch result {
                 case .success(let message):
+                    if self.webSocketTask !== task {
+                        print("[MultiplayerRelay] Ignoring message from stale websocket task")
+                        return
+                    }
+
                     self.handle(message)
-                    self.receiveNextMessage()
+                    self.receiveNextMessage(for: task)
                 case .failure(let error):
+                    if self.webSocketTask !== task {
+                        print("[MultiplayerRelay] Ignoring receive failure from stale websocket task: \(error.localizedDescription)")
+                        return
+                    }
+
                     print("[MultiplayerRelay] Receive failed: \(error.localizedDescription)")
                 }
             }
@@ -200,8 +210,10 @@ final class MultiplayerRelayClient: NSObject {
 
         switch message {
         case .string(let text):
+            print("[MultiplayerRelay] Received websocket text: \(text)")
             data = Data(text.utf8)
         case .data(let rawData):
+            print("[MultiplayerRelay] Received websocket data bytes=\(rawData.count)")
             data = rawData
         @unknown default:
             print("[MultiplayerRelay] Unknown websocket payload")
@@ -305,7 +317,11 @@ extension MultiplayerRelayClient: URLSessionWebSocketDelegate, URLSessionTaskDel
 
             let reasonText = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "none"
             print("[MultiplayerRelay] Closed connection code=\(closeCode.rawValue) reason=\(reasonText)")
-            self.webSocketTask = nil
+            if self.webSocketTask === webSocketTask {
+                self.webSocketTask = nil
+            } else {
+                print("[MultiplayerRelay] Ignored close for stale websocket task")
+            }
         }
     }
 
@@ -320,7 +336,15 @@ extension MultiplayerRelayClient: URLSessionWebSocketDelegate, URLSessionTaskDel
 
         Task { @MainActor [weak self] in
             print("[MultiplayerRelay] Task completed with error: \(error.localizedDescription)")
-            self?.webSocketTask = nil
+            guard let self else {
+                return
+            }
+
+            if self.webSocketTask === task {
+                self.webSocketTask = nil
+            } else {
+                print("[MultiplayerRelay] Ignored completion for stale websocket task")
+            }
         }
     }
 }
