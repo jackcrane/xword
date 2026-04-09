@@ -53,6 +53,7 @@ final class CrosswordGame: ObservableObject {
 
     private static let puzzleURLs = discoverPuzzleURLs()
     private static let multiplayerPinAlphabet = Array("23456789ABCDEFGHJKMNPQRSTVWXYZ")
+    private let multiplayerRelayClient = MultiplayerRelayClient()
 
     init() {
         multiplayerLobbyPin = Self.loadOrCreateMultiplayerLobbyPin()
@@ -238,6 +239,14 @@ final class CrosswordGame: ObservableObject {
         }
 
         return checkedCells.contains(coordinate)
+    }
+
+    func connectAsHost() {
+        multiplayerRelayClient.connect(pin: multiplayerLobbyPin, role: .host)
+    }
+
+    func joinLobby(pin: String) {
+        multiplayerRelayClient.connect(pin: pin, role: .join)
     }
 
     func isSelected(_ coordinate: CrosswordCoordinate) -> Bool {

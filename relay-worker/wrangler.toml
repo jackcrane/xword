@@ -1,0 +1,11 @@
+name = "xword-relay"
+main = "src/index.js"
+compatibility_date = "2026-04-08"
+
+[[durable_objects.bindings]]
+name = "LOBBY_RELAY"
+class_name = "LobbyRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LobbyRelay"]

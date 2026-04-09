@@ -368,6 +368,11 @@ struct ContentView: View {
                 multiplayerJoinPin = formatted
             }
         }
+        .onChange(of: multiplayerMode) { _, newValue in
+            if newValue == .host {
+                game.connectAsHost()
+            }
+        }
     }
 
     private var multiplayerJoinView: some View {
@@ -396,6 +401,7 @@ struct ContentView: View {
                     }
 
                 Button("Join") {
+                    game.joinLobby(pin: multiplayerJoinPin)
                 }
                 .font(.headline)
                 .frame(maxWidth: .infinity)
@@ -479,6 +485,9 @@ struct ContentView: View {
                 .foregroundStyle(.white)
                 .buttonStyle(.plain)
             }
+        }
+        .onAppear {
+            game.connectAsHost()
         }
     }
 
