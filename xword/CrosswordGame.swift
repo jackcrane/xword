@@ -11,6 +11,7 @@ enum CrosswordSettings {
     static let minimumGridDimension = 15
     static let maximumGridDimension = 30
     static let maximumGridDimensionStorageKey = "maximumGridDimension"
+    static let multiplayerLobbyPinStorageKey = "multiplayerLobbyPin"
 
     static var currentMaximumGridDimension: Int {
         let storedValue = UserDefaults.standard.integer(forKey: maximumGridDimensionStorageKey)
@@ -48,10 +49,13 @@ final class CrosswordGame: ObservableObject {
     @Published private(set) var isLoading = false
     @Published var checkAsYouType = false
     @Published private(set) var checkedCells: Set<CrosswordCoordinate> = []
+    @Published private(set) var multiplayerLobbyPin: String
 
     private static let puzzleURLs = discoverPuzzleURLs()
+    private static let multiplayerPinAlphabet = Array("23456789ABCDEFGHJKMNPQRSTVWXYZ")
 
     init() {
+        multiplayerLobbyPin = Self.loadOrCreateMultiplayerLobbyPin()
         loadRandomPuzzle()
     }
 
@@ -61,6 +65,7 @@ final class CrosswordGame: ObservableObject {
         selectedCell: CrosswordCoordinate? = nil,
         selectedDirection: CrosswordDirection = .across
     ) {
+        self.multiplayerLobbyPin = Self.loadOrCreateMultiplayerLobbyPin()
         self.puzzle = puzzle
         self.entries = Dictionary(uniqueKeysWithValues: puzzle.playableCells.map { cell in
             (cell.coordinate, entries[cell.coordinate, default: ""])
@@ -374,6 +379,37 @@ final class CrosswordGame: ObservableObject {
 
         let urls = (enumerator?.allObjects as? [URL] ?? []).filter { $0.pathExtension == "xd" }
         return urls
+    }
+
+    private static func loadOrCreateMultiplayerLobbyPin() -> String {
+        let defaults = UserDefaults.standard
+        let storedPin = defaults.string(forKey: CrosswordSettings.multiplayerLobbyPinStorageKey) ?? ""
+        if isValidMultiplayerLobbyPin(storedPin) {
+            return storedPin
+        }
+
+        let newPin = generateMultiplayerLobbyPin()
+        defaults.set(newPin, forKey: CrosswordSettings.multiplayerLobbyPinStorageKey)
+        return newPin
+    }
+
+    private static func generateMultiplayerLobbyPin() -> String {
+        let characters = (0..<6).map { _ in
+            multiplayerPinAlphabet.randomElement() ?? "2"
+        }
+
+        return "\(String(characters.prefix(3)))-\(String(characters.suffix(3)))"
+    }
+
+    private static func isValidMultiplayerLobbyPin(_ pin: String) -> Bool {
+        let components = pin.split(separator: "-")
+        guard components.count == 2,
+              components.allSatisfy({ $0.count == 3 }) else {
+            return false
+        }
+
+        let allowedCharacters = Set(multiplayerPinAlphabet)
+        return components.joined().allSatisfy { allowedCharacters.contains($0) }
     }
 
     private func normalizedInput(from value: String) -> String? {

@@ -4,6 +4,8 @@
 //
 
 import SwiftUI
+import CoreImage.CIFilterBuiltins
+import UIKit
 
 enum AppColorScheme: String, CaseIterable, Identifiable {
     case system = "System"
@@ -43,6 +45,7 @@ struct ContentView: View {
     @State private var inputPanelMode: InputPanelMode = .keyboard
     @State private var presentedSheet: InputPanelMode?
     @State private var clueTransitionDirection: HorizontalEdge = .trailing
+    @State private var multiplayerMode: MultiplayerSheetMode = .join
 
     @MainActor
     init() {
@@ -330,12 +333,106 @@ struct ContentView: View {
 
     private var multiplayerSheet: some View {
         NavigationStack {
-            Color.clear
-                .navigationTitle("Multiplayer")
-                .navigationBarTitleDisplayMode(.inline)
+            multiplayerSheetContent
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(.ultraThinMaterial)
+    }
+
+    private var multiplayerSheetContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Picker("Multiplayer Mode", selection: $multiplayerMode) {
+                    Text("Join").tag(MultiplayerSheetMode.join)
+                    Text("Host").tag(MultiplayerSheetMode.host)
+                }
+                .pickerStyle(.segmented)
+
+                switch multiplayerMode {
+                case .join:
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                case .host:
+                    multiplayerHostView
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.clear)
+    }
+
+    private var multiplayerHostView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("3 ways to host: share the QR, share the game PIN, or send a link!")
+                .font(.title3.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+
+            multiplayerOptionCard(title: "Share the QR", subtitle: "Someone nearby can scan this to join.") {
+                QRCodeView(payload: game.multiplayerLobbyPin)
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity)
+            }
+
+            multiplayerOptionCard(title: "Share the game PIN", subtitle: "Enter this code on another device.") {
+                VStack(spacing: 8) {
+                    Text("Game PIN")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(game.multiplayerLobbyPin)
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .tracking(2)
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            multiplayerOptionCard(title: "Send a link", subtitle: "Send a one-tap join link to someone") {
+                ShareLink(item: game.multiplayerLobbyPin) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.accentColor)
+                )
+                .foregroundStyle(.white)
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func multiplayerOptionCard<Content: View>(
+        title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline.weight(.semibold))
+
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            content()
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(0.16))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+        }
     }
 
     private func clueSection(title: String, clues: [CrosswordClue]) -> some View {
@@ -385,6 +482,13 @@ struct ContentView: View {
         }
     }
 
+}
+
+private enum MultiplayerSheetMode: String, CaseIterable, Identifiable {
+    case join = "Join"
+    case host = "Host"
+
+    var id: String { rawValue }
 }
 
 private struct CrosswordCellView: View {
@@ -446,6 +550,43 @@ private struct CrosswordCellView: View {
         }
 
         return Color(uiColor: .systemBackground)
+    }
+}
+
+private struct QRCodeView: View {
+    let payload: String
+
+    var body: some View {
+        Group {
+            if let image = qrImage {
+                Image(uiImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.black.opacity(0.08))
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.white)
+        )
+    }
+
+    private var qrImage: UIImage? {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.setValue(Data(payload.utf8), forKey: "inputMessage")
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 12, y: 12)),
+              let cgImage = context.createCGImage(outputImage, from: outputImage.extent) else {
+            return nil
+        }
+
+        return UIImage(cgImage: cgImage)
     }
 }
 
