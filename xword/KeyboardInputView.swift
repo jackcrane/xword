@@ -36,9 +36,7 @@ struct KeyboardInputView: View {
             }
 
             HStack(spacing: 6) {
-                utilityKey(systemName: "keyboard.chevron.compact.down", width: 62) {
-                    isFocused = false
-                }
+                utilityKeyPlaceholder(width: 62)
 
                 letterKeys(bottomRow)
 
@@ -115,5 +113,11 @@ struct KeyboardInputView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    private func utilityKeyPlaceholder(width: CGFloat) -> some View {
+        Color.clear
+            .frame(width: width, height: 36)
+            .accessibilityHidden(true)
     }
 }

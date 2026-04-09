@@ -213,6 +213,85 @@ struct xwordTests {
         }
     }
 
+    @MainActor
+    @Test func remoteFinalEntryShowsCompletionSheet() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let almostSolvedEntries = Dictionary(uniqueKeysWithValues: puzzle.playableCells.map { cell in
+            let value = cell.coordinate == CrosswordCoordinate(row: 2, column: 2) ? "" : (cell.solution ?? "")
+            return (cell.coordinate, value)
+        })
+        let game = CrosswordGame(puzzle: puzzle, entries: almostSolvedEntries)
+
+        game.relayClient(
+            MultiplayerRelayClient(),
+            didReceive: .relayed(
+                fromPlayerID: "remote-player",
+                event: .entryUpdated(MultiplayerEntrySnapshot(coordinate: CrosswordCoordinate(row: 2, column: 2), value: "T"))
+            )
+        )
+
+        #expect(game.isShowingCompletionSheet)
+    }
+
+    @MainActor
+    @Test func solvedRemoteSnapshotShowsCompletionSheet() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(puzzle: puzzle, entries: [:])
+        let snapshot = MultiplayerStateSnapshot(
+            puzzleID: puzzle.sourceID,
+            entries: puzzle.playableCells.map { cell in
+                MultiplayerEntrySnapshot(coordinate: cell.coordinate, value: cell.solution ?? "")
+            },
+            selection: MultiplayerSelection(coordinate: CrosswordCoordinate(row: 0, column: 0), direction: .across)
+        )
+
+        game.relayClient(
+            MultiplayerRelayClient(),
+            didReceive: .relayed(
+                fromPlayerID: "remote-player",
+                event: .stateSnapshot(snapshot)
+            )
+        )
+
+        #expect(game.isShowingCompletionSheet)
+    }
+
     private func sampleURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

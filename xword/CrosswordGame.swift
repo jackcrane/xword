@@ -8,8 +8,8 @@ import Foundation
 import SwiftUI
 
 enum CrosswordSettings {
-    static let defaultMaximumGridDimension = 20
-    static let minimumGridDimension = 15
+    static let defaultMaximumGridDimension = 15
+    static let minimumGridDimension = 12
     static let maximumGridDimension = 30
     static let maximumGridDimensionStorageKey = "maximumGridDimension"
     static let multiplayerLobbyPinStorageKey = "multiplayerLobbyPin"
@@ -520,7 +520,8 @@ final class CrosswordGame: ObservableObject {
         withID puzzleID: String,
         entries snapshotEntries: [MultiplayerEntrySnapshot],
         selection: MultiplayerSelection?,
-        preserveRemoteSelections: Bool = false
+        preserveRemoteSelections: Bool = false,
+        evaluateCompletionAfterLoad: Bool = false
     ) {
         isLoading = true
 
@@ -536,6 +537,9 @@ final class CrosswordGame: ObservableObject {
 
                 let entryMap = Dictionary(uniqueKeysWithValues: snapshotEntries.map { ($0.coordinate, $0.value) })
                 applyPuzzle(parsedPuzzle, entries: entryMap, selection: selection, clearRemoteSelections: !preserveRemoteSelections)
+                if evaluateCompletionAfterLoad {
+                    evaluatePuzzleCompletion()
+                }
                 errorMessage = nil
             } catch {
                 errorMessage = error.localizedDescription
@@ -653,7 +657,7 @@ final class CrosswordGame: ObservableObject {
     private func applyRemoteEntry(_ entry: MultiplayerEntrySnapshot) {
         setEntry(entry.value, at: entry.coordinate)
         checkedCells.remove(entry.coordinate)
-        isShowingCompletionSheet = false
+        evaluatePuzzleCompletion()
     }
 
     private func applyRemoteStateSnapshot(_ snapshot: MultiplayerStateSnapshot, fromPlayerID: String) {
@@ -670,10 +674,17 @@ final class CrosswordGame: ObservableObject {
             }
             checkedCells = []
             multiplayerRemoteSelections[fromPlayerID] = snapshot.selection
+            evaluatePuzzleCompletion()
             print("[MultiplayerRelay] Applied state snapshot onto existing puzzle")
         } else {
             print("[MultiplayerRelay] Loading puzzle \(snapshot.puzzleID) from snapshot")
-            loadPuzzle(withID: snapshot.puzzleID, entries: snapshot.entries, selection: snapshot.selection, preserveRemoteSelections: false)
+            loadPuzzle(
+                withID: snapshot.puzzleID,
+                entries: snapshot.entries,
+                selection: snapshot.selection,
+                preserveRemoteSelections: false,
+                evaluateCompletionAfterLoad: true
+            )
             multiplayerRemoteSelections[fromPlayerID] = snapshot.selection
         }
     }
