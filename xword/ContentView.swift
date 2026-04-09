@@ -46,6 +46,7 @@ struct ContentView: View {
     @State private var presentedSheet: InputPanelMode?
     @State private var clueTransitionDirection: HorizontalEdge = .trailing
     @State private var multiplayerMode: MultiplayerSheetMode = .join
+    @State private var multiplayerJoinPin = ""
 
     @MainActor
     init() {
@@ -350,8 +351,7 @@ struct ContentView: View {
 
                 switch multiplayerMode {
                 case .join:
-                    Color.clear
-                        .frame(maxWidth: .infinity, minHeight: 220)
+                    multiplayerJoinView
                 case .host:
                     multiplayerHostView
                 }
@@ -362,6 +362,78 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color.clear)
+        .onChange(of: multiplayerJoinPin) { _, newValue in
+            let formatted = formatMultiplayerPinInput(newValue)
+            if formatted != newValue {
+                multiplayerJoinPin = formatted
+            }
+        }
+    }
+
+    private var multiplayerJoinView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Enter a game PIN to join an existing lobby.")
+                .font(.title3.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 18) {
+                TextField("ABC-DEF", text: $multiplayerJoinPin)
+                    .keyboardType(.asciiCapable)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .tracking(2)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 18)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(Color(uiColor: .secondarySystemBackground))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color(uiColor: .separator).opacity(0.35), lineWidth: 1)
+                    }
+
+                Button("Join") {
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(isValidMultiplayerJoinPin ? Color.accentColor : Color.white.opacity(0.12))
+                )
+                .foregroundStyle(isValidMultiplayerJoinPin ? .white : .secondary)
+                .disabled(!isValidMultiplayerJoinPin)
+
+                HStack(spacing: 12) {
+                    Divider()
+                    Text("or")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Divider()
+                }
+
+                Button {
+                } label: {
+                    Label("Scan a QR", systemImage: "qrcode.viewfinder")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemBackground))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color(uiColor: .separator).opacity(0.45), lineWidth: 1)
+                }
+                .foregroundStyle(.primary)
+            }
+            .frame(maxWidth: .infinity)
+        }
     }
 
     private var multiplayerHostView: some View {
@@ -370,13 +442,15 @@ struct ContentView: View {
                 .font(.title3.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
 
-            multiplayerOptionCard(title: "Share the QR", subtitle: "Someone nearby can scan this to join.") {
+            multiplayerOptionSection(title: "Share the QR", subtitle: "Someone nearby can scan this to join.") {
                 QRCodeView(payload: game.multiplayerLobbyPin)
                     .frame(width: 220, height: 220)
                     .frame(maxWidth: .infinity)
             }
 
-            multiplayerOptionCard(title: "Share the game PIN", subtitle: "Enter this code on another device.") {
+            Divider()
+
+            multiplayerOptionSection(title: "Share the game PIN", subtitle: "Enter this code on another device.") {
                 VStack(spacing: 8) {
                     Text("Game PIN")
                         .font(.footnote.weight(.semibold))
@@ -389,7 +463,9 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
             }
 
-            multiplayerOptionCard(title: "Send a link", subtitle: "Send a one-tap join link to someone") {
+            Divider()
+
+            multiplayerOptionSection(title: "Send a link", subtitle: "Send a one-tap join link to someone") {
                 ShareLink(item: game.multiplayerLobbyPin) {
                     Label("Share", systemImage: "square.and.arrow.up")
                         .font(.headline)
@@ -406,7 +482,7 @@ struct ContentView: View {
         }
     }
 
-    private func multiplayerOptionCard<Content: View>(
+    private func multiplayerOptionSection<Content: View>(
         title: String,
         subtitle: String,
         @ViewBuilder content: () -> Content
@@ -423,16 +499,36 @@ struct ContentView: View {
 
             content()
         }
-        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.white.opacity(0.16))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+    }
+
+    private var isValidMultiplayerJoinPin: Bool {
+        isValidMultiplayerPin(multiplayerJoinPin)
+    }
+
+    private func formatMultiplayerPinInput(_ value: String) -> String {
+        let allowedCharacters = Set("23456789ABCDEFGHJKMNPQRSTVWXYZ")
+        let cleaned = value.uppercased().filter { allowedCharacters.contains($0) }
+        let trimmed = String(cleaned.prefix(6))
+
+        if trimmed.count <= 3 {
+            return trimmed
         }
+
+        let prefix = trimmed.prefix(3)
+        let suffix = trimmed.suffix(trimmed.count - 3)
+        return "\(prefix)-\(suffix)"
+    }
+
+    private func isValidMultiplayerPin(_ value: String) -> Bool {
+        let components = value.split(separator: "-")
+        guard components.count == 2,
+              components.allSatisfy({ $0.count == 3 }) else {
+            return false
+        }
+
+        let allowedCharacters = Set("23456789ABCDEFGHJKMNPQRSTVWXYZ")
+        return components.joined().allSatisfy { allowedCharacters.contains($0) }
     }
 
     private func clueSection(title: String, clues: [CrosswordClue]) -> some View {
