@@ -292,6 +292,103 @@ struct xwordTests {
         #expect(game.isShowingCompletionSheet)
     }
 
+    @MainActor
+    @Test func joiningLobbyWaitsForSnapshotUntilBoardArrives() throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(
+            puzzle: puzzle,
+            entries: [:],
+            multiplayerBoardRetrySchedule: [.milliseconds(20), .milliseconds(20), .milliseconds(20), .milliseconds(20)]
+        )
+        let localPlayer = MultiplayerLobbyPlayer(id: "joiner", role: .join, color: .pink, joinedAt: 1)
+        let hostPlayer = MultiplayerLobbyPlayer(id: "host", role: .host, color: .orange, joinedAt: 0)
+        let snapshot = MultiplayerStateSnapshot(
+            puzzleID: puzzle.sourceID,
+            entries: [
+                MultiplayerEntrySnapshot(coordinate: CrosswordCoordinate(row: 0, column: 0), value: "S")
+            ],
+            selection: MultiplayerSelection(coordinate: CrosswordCoordinate(row: 0, column: 0), direction: .across)
+        )
+
+        game.relayClient(
+            MultiplayerRelayClient(),
+            didReceive: .welcome(selfID: localPlayer.id, pin: "ABC-DEF", role: .join, players: [hostPlayer, localPlayer])
+        )
+
+        #expect(game.isWaitingForMultiplayerBoard)
+        #expect(!game.hasFailedToLoadMultiplayerBoard)
+
+        game.relayClient(
+            MultiplayerRelayClient(),
+            didReceive: .relayed(
+                fromPlayerID: hostPlayer.id,
+                event: .stateSnapshot(snapshot)
+            )
+        )
+
+        #expect(!game.isWaitingForMultiplayerBoard)
+        #expect(!game.hasFailedToLoadMultiplayerBoard)
+        #expect(game.entry(for: CrosswordCoordinate(row: 0, column: 0)) == "S")
+    }
+
+    @MainActor
+    @Test func joiningLobbyShowsFailureAfterRetryBackoffExpires() async throws {
+        let puzzle = try parser.parse(contents: """
+        Title: Tiny Puzzle
+        Author: Tests
+        Date: 2026-04-08
+
+
+        SUN
+        ERA
+        NET
+
+
+        A1. Bright day source ~ SUN
+        A4. Historical period ~ ERA
+        A5. Mesh material ~ NET
+        D1. Preview down clue ~ SEN
+        D2. Uncertain sound ~ URE
+        D3. Park service shorthand ~ NAT
+        """)
+
+        let game = CrosswordGame(
+            puzzle: puzzle,
+            entries: [:],
+            multiplayerBoardRetrySchedule: [.milliseconds(10), .milliseconds(10), .milliseconds(10), .milliseconds(10)]
+        )
+        let localPlayer = MultiplayerLobbyPlayer(id: "joiner", role: .join, color: .pink, joinedAt: 1)
+        let hostPlayer = MultiplayerLobbyPlayer(id: "host", role: .host, color: .orange, joinedAt: 0)
+
+        game.relayClient(
+            MultiplayerRelayClient(),
+            didReceive: .welcome(selfID: localPlayer.id, pin: "ABC-DEF", role: .join, players: [hostPlayer, localPlayer])
+        )
+
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(game.hasFailedToLoadMultiplayerBoard)
+        #expect(!game.isWaitingForMultiplayerBoard)
+    }
+
     private func sampleURL(_ relativePath: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

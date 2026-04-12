@@ -43,6 +43,12 @@ extension CrosswordSettings {
 
 @MainActor
 final class CrosswordGame: ObservableObject {
+    private enum MultiplayerBoardSyncState {
+        case idle
+        case waiting
+        case failed
+    }
+
     @Published private(set) var puzzle: CrosswordPuzzle?
     @Published private(set) var entries: [CrosswordCoordinate: String] = [:]
     @Published private(set) var selectedCell: CrosswordCoordinate?
@@ -70,9 +76,13 @@ final class CrosswordGame: ObservableObject {
     nonisolated private static let multiplayerPinAlphabet = Array("23456789ABCDEFGHJKMNPQRSTVWXYZ")
 
     private let multiplayerRelayClient = MultiplayerRelayClient()
+    private let multiplayerBoardRetrySchedule: [Duration]
+    private var multiplayerBoardRetryTask: Task<Void, Never>?
+    private var multiplayerBoardSyncState: MultiplayerBoardSyncState = .idle
 
-    init() {
+    init(multiplayerBoardRetrySchedule: [Duration] = [.seconds(1), .seconds(2), .seconds(3), .seconds(5)]) {
         multiplayerLobbyPin = Self.generateMultiplayerLobbyPin()
+        self.multiplayerBoardRetrySchedule = multiplayerBoardRetrySchedule
         multiplayerRelayClient.delegate = self
         loadRandomPuzzle()
     }
@@ -81,9 +91,11 @@ final class CrosswordGame: ObservableObject {
         puzzle: CrosswordPuzzle,
         entries: [CrosswordCoordinate: String],
         selectedCell: CrosswordCoordinate? = nil,
-        selectedDirection: CrosswordDirection = .across
+        selectedDirection: CrosswordDirection = .across,
+        multiplayerBoardRetrySchedule: [Duration] = [.seconds(1), .seconds(2), .seconds(3), .seconds(5)]
     ) {
         multiplayerLobbyPin = Self.generateMultiplayerLobbyPin()
+        self.multiplayerBoardRetrySchedule = multiplayerBoardRetrySchedule
         multiplayerRelayClient.delegate = self
         self.puzzle = puzzle
         self.entries = Dictionary(uniqueKeysWithValues: puzzle.playableCells.map { cell in
@@ -142,6 +154,14 @@ final class CrosswordGame: ObservableObject {
 
     var orderedLobbyPlayers: [MultiplayerLobbyPlayer] {
         multiplayerPlayers.sorted { $0.joinedAt < $1.joinedAt }
+    }
+
+    var isWaitingForMultiplayerBoard: Bool {
+        multiplayerBoardSyncState == .waiting
+    }
+
+    var hasFailedToLoadMultiplayerBoard: Bool {
+        multiplayerBoardSyncState == .failed
     }
 
     var multiplayerJoinURL: URL? {
@@ -207,6 +227,7 @@ final class CrosswordGame: ObservableObject {
         broadcastEntryUpdate(for: selectedCell)
         moveForward()
         broadcastSelectionIfNeeded()
+        syncHostedStateSnapshotToServer()
         evaluatePuzzleCompletion()
     }
 
@@ -219,6 +240,7 @@ final class CrosswordGame: ObservableObject {
             setEntry("", at: selectedCell)
             checkedCells.remove(selectedCell)
             broadcastEntryUpdate(for: selectedCell)
+            syncHostedStateSnapshotToServer()
             isShowingCompletionSheet = false
             return
         }
@@ -229,6 +251,7 @@ final class CrosswordGame: ObservableObject {
             checkedCells.remove(selectedCell)
             broadcastEntryUpdate(for: selectedCell)
             broadcastSelectionIfNeeded()
+            syncHostedStateSnapshotToServer()
             isShowingCompletionSheet = false
         }
     }
@@ -295,6 +318,7 @@ final class CrosswordGame: ObservableObject {
             }
         }
 
+        syncHostedStateSnapshotToServer()
         evaluatePuzzleCompletion()
     }
 
@@ -311,11 +335,13 @@ final class CrosswordGame: ObservableObject {
     }
 
     func connectAsHost() {
+        resetMultiplayerBoardSyncState()
         print("[MultiplayerRelay] Host connect requested for lobby \(multiplayerLobbyPin)")
         multiplayerRelayClient.connect(pin: multiplayerLobbyPin, role: .host)
     }
 
     func joinLobby(pin: String) {
+        prepareForMultiplayerBoardSync()
         print("[MultiplayerRelay] Join connect requested for lobby \(pin)")
         multiplayerRelayClient.connect(pin: pin, role: .join)
     }
@@ -521,7 +547,8 @@ final class CrosswordGame: ObservableObject {
         entries snapshotEntries: [MultiplayerEntrySnapshot],
         selection: MultiplayerSelection?,
         preserveRemoteSelections: Bool = false,
-        evaluateCompletionAfterLoad: Bool = false
+        evaluateCompletionAfterLoad: Bool = false,
+        completePendingMultiplayerBoardSync: Bool = false
     ) {
         isLoading = true
 
@@ -541,8 +568,14 @@ final class CrosswordGame: ObservableObject {
                     evaluatePuzzleCompletion()
                 }
                 errorMessage = nil
+                if completePendingMultiplayerBoardSync {
+                    resolveMultiplayerBoardSync()
+                }
             } catch {
                 errorMessage = error.localizedDescription
+                if completePendingMultiplayerBoardSync {
+                    failMultiplayerBoardSync()
+                }
             }
 
             isLoading = false
@@ -596,24 +629,41 @@ final class CrosswordGame: ObservableObject {
     }
 
     private func sendStateSnapshot(targetPlayerID: String? = nil) {
-        guard isHostingLobby, let puzzle else {
+        guard isHostingLobby, let snapshot = currentMultiplayerStateSnapshot() else {
             print("[MultiplayerRelay] Skipped state snapshot send because host state was unavailable")
             return
         }
-
-        let snapshot = MultiplayerStateSnapshot(
-            puzzleID: puzzle.sourceID,
-            entries: puzzle.playableCells.map { cell in
-                MultiplayerEntrySnapshot(coordinate: cell.coordinate, value: entries[cell.coordinate, default: ""])
-            },
-            selection: selectedCell.map { MultiplayerSelection(coordinate: $0, direction: selectedDirection) }
-        )
 
         let targetDescription = targetPlayerID ?? "all players"
         print(
             "[MultiplayerRelay] Sending state snapshot to \(targetDescription) puzzle=\(snapshot.puzzleID) entries=\(snapshot.entries.count) selection=\(snapshot.selection != nil)"
         )
         multiplayerRelayClient.sendRelayEvent(.stateSnapshot(snapshot), targetPlayerID: targetPlayerID)
+    }
+
+    private func currentMultiplayerStateSnapshot() -> MultiplayerStateSnapshot? {
+        guard let puzzle else {
+            return nil
+        }
+
+        return MultiplayerStateSnapshot(
+            puzzleID: puzzle.sourceID,
+            entries: puzzle.playableCells.map { cell in
+                MultiplayerEntrySnapshot(coordinate: cell.coordinate, value: entries[cell.coordinate, default: ""])
+            },
+            selection: selectedCell.map { MultiplayerSelection(coordinate: $0, direction: selectedDirection) }
+        )
+    }
+
+    private func syncHostedStateSnapshotToServer() {
+        guard isHostingLobby, let snapshot = currentMultiplayerStateSnapshot() else {
+            return
+        }
+
+        print(
+            "[MultiplayerRelay] Uploading host snapshot to server puzzle=\(snapshot.puzzleID) entries=\(snapshot.entries.count) selection=\(snapshot.selection != nil)"
+        )
+        multiplayerRelayClient.uploadStateSnapshot(snapshot)
     }
 
     private func broadcastSelectionIfNeeded() {
@@ -636,27 +686,17 @@ final class CrosswordGame: ObservableObject {
     }
 
     private func updateRoster(_ players: [MultiplayerLobbyPlayer]) {
-        let previousPlayerIDs = Set(multiplayerPlayers.map(\.id))
         multiplayerPlayers = players.sorted { $0.joinedAt < $1.joinedAt }
 
         let activeIDs = Set(multiplayerPlayers.map(\.id))
         multiplayerRemoteSelections = multiplayerRemoteSelections.filter { activeIDs.contains($0.key) }
         broadcastSelectionIfNeeded()
-
-        if isHostingLobby {
-            let newRemotePlayerIDs = multiplayerPlayers
-                .map(\.id)
-                .filter { !previousPlayerIDs.contains($0) && $0 != multiplayerLocalPlayerID }
-
-            for playerID in newRemotePlayerIDs {
-                sendStateSnapshot(targetPlayerID: playerID)
-            }
-        }
     }
 
     private func applyRemoteEntry(_ entry: MultiplayerEntrySnapshot) {
         setEntry(entry.value, at: entry.coordinate)
         checkedCells.remove(entry.coordinate)
+        syncHostedStateSnapshotToServer()
         evaluatePuzzleCompletion()
     }
 
@@ -675,6 +715,7 @@ final class CrosswordGame: ObservableObject {
             checkedCells = []
             multiplayerRemoteSelections[fromPlayerID] = snapshot.selection
             evaluatePuzzleCompletion()
+            resolveMultiplayerBoardSync()
             print("[MultiplayerRelay] Applied state snapshot onto existing puzzle")
         } else {
             print("[MultiplayerRelay] Loading puzzle \(snapshot.puzzleID) from snapshot")
@@ -683,19 +724,87 @@ final class CrosswordGame: ObservableObject {
                 entries: snapshot.entries,
                 selection: snapshot.selection,
                 preserveRemoteSelections: false,
-                evaluateCompletionAfterLoad: true
+                evaluateCompletionAfterLoad: true,
+                completePendingMultiplayerBoardSync: true
             )
             multiplayerRemoteSelections[fromPlayerID] = snapshot.selection
         }
     }
 
     private func resetLocalLobbyStateAndReloadPuzzle() {
+        resetMultiplayerBoardSyncState()
         multiplayerPlayers = []
         multiplayerRole = nil
         multiplayerLocalPlayerID = nil
         multiplayerRemoteSelections = [:]
         requestDismissToKeyboard()
         loadRandomPuzzleInternal(notifyPeers: false)
+    }
+
+    private func prepareForMultiplayerBoardSync() {
+        multiplayerBoardRetryTask?.cancel()
+        multiplayerBoardRetryTask = nil
+        multiplayerBoardSyncState = .waiting
+        multiplayerRemoteSelections = [:]
+        isShowingCompletionSheet = false
+        errorMessage = nil
+        requestDismissToKeyboard()
+    }
+
+    private func startMultiplayerBoardSyncRetries() {
+        multiplayerBoardRetryTask?.cancel()
+        multiplayerBoardRetryTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            for delay in multiplayerBoardRetrySchedule {
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
+
+                guard !Task.isCancelled, multiplayerBoardSyncState == .waiting else {
+                    return
+                }
+
+                requestHostSnapshot(reason: "retry after \(delay)")
+            }
+
+            guard !Task.isCancelled, multiplayerBoardSyncState == .waiting else {
+                return
+            }
+
+            failMultiplayerBoardSync()
+        }
+    }
+
+    private func requestHostSnapshot(reason: String) {
+        guard multiplayerRole == .join else {
+            return
+        }
+
+        print("[MultiplayerRelay] Requesting host snapshot (\(reason))")
+        multiplayerRelayClient.sendRelayEvent(.snapshotRequested)
+    }
+
+    private func resolveMultiplayerBoardSync() {
+        multiplayerBoardRetryTask?.cancel()
+        multiplayerBoardRetryTask = nil
+        multiplayerBoardSyncState = .idle
+    }
+
+    private func failMultiplayerBoardSync() {
+        multiplayerBoardRetryTask?.cancel()
+        multiplayerBoardRetryTask = nil
+        multiplayerBoardSyncState = .failed
+    }
+
+    private func resetMultiplayerBoardSyncState() {
+        multiplayerBoardRetryTask?.cancel()
+        multiplayerBoardRetryTask = nil
+        multiplayerBoardSyncState = .idle
     }
 
     private func showToast(_ message: String) {
@@ -856,10 +965,14 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
             multiplayerRole = role
             updateRoster(players)
             if role == .join {
-                print("[MultiplayerRelay] Requesting host snapshot after join welcome")
-                multiplayerRelayClient.sendRelayEvent(.snapshotRequested)
+                prepareForMultiplayerBoardSync()
+                requestHostSnapshot(reason: "initial join welcome")
+                startMultiplayerBoardSyncRetries()
                 requestDismissToKeyboard()
                 showToast("Successfully joined the room")
+            } else {
+                resetMultiplayerBoardSyncState()
+                syncHostedStateSnapshotToServer()
             }
             print("[MultiplayerRelay] Connected as \(role.rawValue)")
 
@@ -869,10 +982,6 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
         case .playerJoined(let playerID):
             guard playerID != multiplayerLocalPlayerID else {
                 return
-            }
-
-            if isHostingLobby {
-                sendStateSnapshot(targetPlayerID: playerID)
             }
 
             showToast("Someone joined the room")
@@ -892,8 +1001,14 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
                     sendStateSnapshot(targetPlayerID: fromPlayerID)
                 }
             case .selectionUpdated(let selection):
+                guard !isWaitingForMultiplayerBoard, !hasFailedToLoadMultiplayerBoard else {
+                    return
+                }
                 multiplayerRemoteSelections[fromPlayerID] = selection
             case .entryUpdated(let entry):
+                guard !isWaitingForMultiplayerBoard, !hasFailedToLoadMultiplayerBoard else {
+                    return
+                }
                 applyRemoteEntry(entry)
             }
 
@@ -907,6 +1022,12 @@ extension CrosswordGame: MultiplayerRelayClientDelegate {
 
         case .error(let message):
             print("[MultiplayerRelay] Error: \(message)")
+            if multiplayerRole != .join {
+                resetMultiplayerBoardSyncState()
+            } else {
+                failMultiplayerBoardSync()
+            }
+            showToast(message)
         }
     }
 }

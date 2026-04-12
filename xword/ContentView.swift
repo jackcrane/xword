@@ -72,7 +72,10 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if game.selectedCell != nil && isKeyboardFocused {
+                if game.selectedCell != nil &&
+                    isKeyboardFocused &&
+                    !game.isWaitingForMultiplayerBoard &&
+                    !game.hasFailedToLoadMultiplayerBoard {
                     VStack(spacing: 0) {
                         currentClueBanner
                         KeyboardInputView(
@@ -97,6 +100,15 @@ struct ContentView: View {
                 presentedSheet = nil
                 inputPanelMode = .keyboard
                 isKeyboardFocused = game.selectedCell != nil
+            }
+            .onChange(of: game.isWaitingForMultiplayerBoard) { _, isWaitingForBoard in
+                guard isWaitingForBoard else {
+                    return
+                }
+
+                presentedSheet = nil
+                inputPanelMode = .keyboard
+                isKeyboardFocused = false
             }
             .onChange(of: inputPanelMode) { _, newValue in
                 switch newValue {
@@ -132,7 +144,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let puzzle = game.puzzle {
+        if game.isWaitingForMultiplayerBoard {
+            multiplayerBoardLoadingView
+        } else if game.hasFailedToLoadMultiplayerBoard {
+            multiplayerBoardFailureView
+        } else if let puzzle = game.puzzle {
             puzzleContent(for: puzzle)
         } else if game.isLoading {
             ProgressView()
@@ -144,6 +160,62 @@ struct ContentView: View {
                 description: Text(game.errorMessage ?? "The puzzle could not be loaded.")
             )
         }
+    }
+
+    private var multiplayerBoardLoadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+
+            Text("Loading room board...")
+                .font(.title3.weight(.semibold))
+
+            Text("We’re waiting for the host to send the current crossword.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var multiplayerBoardFailureView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 42, weight: .semibold))
+                .foregroundStyle(.orange)
+
+            VStack(spacing: 8) {
+                Text("Something went wrong")
+                    .font(.title3.weight(.semibold))
+
+                Text("We couldn’t load the board from the room. You can leave and try joining again.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                game.leaveLobby()
+            } label: {
+                Text("Leave room")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.red.opacity(0.16))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.red.opacity(0.35), lineWidth: 1)
+            }
+            .foregroundStyle(.red)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func puzzleContent(for puzzle: CrosswordPuzzle) -> some View {

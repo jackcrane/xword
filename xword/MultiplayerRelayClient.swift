@@ -36,6 +36,11 @@ final class MultiplayerRelayClient: NSObject {
         let type = "end_lobby"
     }
 
+    private struct StateUpdatePayload: Encodable {
+        let type = "state_update"
+        let snapshot: MultiplayerStateSnapshot
+    }
+
     private struct RelayPayload: Encodable {
         let type = "relay"
         let targetPlayerID: String?
@@ -154,6 +159,10 @@ final class MultiplayerRelayClient: NSObject {
 
     func endLobby() {
         sendEncodable(EndLobbyPayload())
+    }
+
+    func uploadStateSnapshot(_ snapshot: MultiplayerStateSnapshot) {
+        sendEncodable(StateUpdatePayload(snapshot: snapshot))
     }
 
     private func sendEncodable(_ payload: some Encodable) {
