@@ -205,12 +205,14 @@ final class CrosswordGame: ObservableObject {
         }
 
         broadcastSelectionIfNeeded()
+        syncHostedStateSnapshotToServer()
     }
 
     func selectClue(_ clue: CrosswordClue) {
         selectedDirection = clue.direction
         selectedCell = clue.cells.first
         broadcastSelectionIfNeeded()
+        syncHostedStateSnapshotToServer()
     }
 
     func insert(text: String) {
@@ -384,6 +386,7 @@ final class CrosswordGame: ObservableObject {
 
         selectedDirection = selectedDirection == .across ? .down : .across
         broadcastSelectionIfNeeded()
+        syncHostedStateSnapshotToServer()
     }
 
     func selectNextClue() {
@@ -528,6 +531,7 @@ final class CrosswordGame: ObservableObject {
 
                 applyPuzzle(puzzle)
                 errorMessage = nil
+                syncHostedStateSnapshotToServer()
                 if notifyPeers {
                     sendStateSnapshot()
                 }
