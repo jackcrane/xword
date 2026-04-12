@@ -7,6 +7,7 @@ export class LobbyRelay {
     this.state = state;
     this.env = env;
     this.sessions = new Map();
+    this.awaitingSnapshotPlayerIds = new Set();
     this.joinSequence = 0;
     this.latestSnapshot = null;
     this.state.blockConcurrencyWhile(async () => {
@@ -51,7 +52,7 @@ export class LobbyRelay {
 
     server.accept();
     if (role === "host") {
-      this.latestSnapshot = null;
+      await this.clearSnapshot();
     }
     this.sessions.set(playerId, session);
 
@@ -94,7 +95,9 @@ export class LobbyRelay {
         { excludePlayerId: playerId }
       );
 
-      this.sendStoredSnapshotTo(playerId);
+      if (!this.sendStoredSnapshotTo(playerId)) {
+        this.awaitingSnapshotPlayerIds.add(playerId);
+      }
     }
 
     return new Response(null, {
@@ -124,7 +127,7 @@ export class LobbyRelay {
         this.kickPlayer(session, message.playerID);
         break;
       case "end_lobby":
-        this.endLobby(session);
+        await this.endLobby(session);
         break;
       default:
         this.sendTo(session.id, { type: "error", message: `Unknown message type: ${message.type}` });
@@ -186,13 +189,13 @@ export class LobbyRelay {
     this.removeSession(targetPlayerId, "kicked");
   }
 
-  endLobby(session) {
+  async endLobby(session) {
     if (session.role !== "host") {
       this.sendTo(session.id, { type: "error", message: "Only the host can end the lobby" });
       return;
     }
 
-    void this.clearSnapshot();
+    await this.clearSnapshot();
     for (const [playerId, entry] of this.sessions.entries()) {
       this.sendTo(playerId, { type: "lobby_ended" });
       entry.socket.close(4003, "lobby ended");
@@ -207,6 +210,7 @@ export class LobbyRelay {
       return;
     }
 
+    this.awaitingSnapshotPlayerIds.delete(playerId);
     const wasHost = removed.role === "host";
     this.sessions.delete(playerId);
 
@@ -249,7 +253,7 @@ export class LobbyRelay {
       try {
         session.socket.send(encoded);
       } catch {
-        this.sessions.delete(playerId);
+        this.removeSession(playerId, "send_error");
       }
     }
   }
@@ -263,7 +267,7 @@ export class LobbyRelay {
     try {
       target.socket.send(JSON.stringify(message));
     } catch {
-      this.sessions.delete(playerId);
+      this.removeSession(playerId, "send_error");
     }
   }
 
@@ -281,17 +285,26 @@ export class LobbyRelay {
         snapshot: this.latestSnapshot,
       },
     });
+    this.awaitingSnapshotPlayerIds.delete(playerId);
     return true;
   }
 
   async saveSnapshot(snapshot) {
     this.latestSnapshot = snapshot;
     await this.state.storage.put(SNAPSHOT_STORAGE_KEY, snapshot);
+    this.flushAwaitingSnapshots();
   }
 
   async clearSnapshot() {
     this.latestSnapshot = null;
+    this.awaitingSnapshotPlayerIds.clear();
     await this.state.storage.delete(SNAPSHOT_STORAGE_KEY);
+  }
+
+  flushAwaitingSnapshots() {
+    for (const playerId of [...this.awaitingSnapshotPlayerIds]) {
+      this.sendStoredSnapshotTo(playerId);
+    }
   }
 
   currentHost() {
