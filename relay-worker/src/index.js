@@ -1,5 +1,6 @@
 const PLAYER_COLORS = ["pink", "orange", "yellow", "teal", "lightGreen"];
 const MAX_PLAYERS = PLAYER_COLORS.length + 1;
+const SNAPSHOT_STORAGE_KEY = "latestSnapshot";
 
 export class LobbyRelay {
   constructor(state, env) {
@@ -8,6 +9,9 @@ export class LobbyRelay {
     this.sessions = new Map();
     this.joinSequence = 0;
     this.latestSnapshot = null;
+    this.state.blockConcurrencyWhile(async () => {
+      this.latestSnapshot = (await this.state.storage.get(SNAPSHOT_STORAGE_KEY)) ?? null;
+    });
   }
 
   async fetch(request) {
@@ -52,7 +56,7 @@ export class LobbyRelay {
     this.sessions.set(playerId, session);
 
     server.addEventListener("message", (event) => {
-      this.handleMessage(session, event.data);
+      void this.handleMessage(session, event.data);
     });
 
     server.addEventListener("close", () => {
@@ -99,7 +103,7 @@ export class LobbyRelay {
     });
   }
 
-  handleMessage(session, rawData) {
+  async handleMessage(session, rawData) {
     let message;
 
     try {
@@ -111,10 +115,10 @@ export class LobbyRelay {
 
     switch (message.type) {
       case "state_update":
-        this.storeSnapshot(session, message.snapshot);
+        await this.storeSnapshot(session, message.snapshot);
         break;
       case "relay":
-        this.forwardRelay(session, message);
+        await this.forwardRelay(session, message);
         break;
       case "kick":
         this.kickPlayer(session, message.playerID);
@@ -127,7 +131,7 @@ export class LobbyRelay {
     }
   }
 
-  forwardRelay(session, message) {
+  async forwardRelay(session, message) {
     if (message.event?.type === "snapshotRequested") {
       if (this.sendStoredSnapshotTo(session.id)) {
         return;
@@ -135,7 +139,7 @@ export class LobbyRelay {
     }
 
     if (session.role === "host" && message.event?.type === "stateSnapshot" && message.event.snapshot) {
-      this.latestSnapshot = message.event.snapshot;
+      await this.saveSnapshot(message.event.snapshot);
     }
 
     const payload = {
@@ -152,7 +156,7 @@ export class LobbyRelay {
     this.broadcast(payload, { excludePlayerId: session.id });
   }
 
-  storeSnapshot(session, snapshot) {
+  async storeSnapshot(session, snapshot) {
     if (session.role !== "host") {
       this.sendTo(session.id, { type: "error", message: "Only the host can upload board state" });
       return;
@@ -163,7 +167,7 @@ export class LobbyRelay {
       return;
     }
 
-    this.latestSnapshot = snapshot;
+    await this.saveSnapshot(snapshot);
   }
 
   kickPlayer(session, targetPlayerId) {
@@ -188,7 +192,7 @@ export class LobbyRelay {
       return;
     }
 
-    this.latestSnapshot = null;
+    void this.clearSnapshot();
     for (const [playerId, entry] of this.sessions.entries()) {
       this.sendTo(playerId, { type: "lobby_ended" });
       entry.socket.close(4003, "lobby ended");
@@ -207,7 +211,7 @@ export class LobbyRelay {
     this.sessions.delete(playerId);
 
     if (wasHost && reason !== "kicked") {
-      this.latestSnapshot = null;
+      void this.clearSnapshot();
       for (const [remainingId, session] of this.sessions.entries()) {
         this.sendTo(remainingId, { type: "lobby_ended" });
         session.socket.close(4004, "host disconnected");
@@ -278,6 +282,16 @@ export class LobbyRelay {
       },
     });
     return true;
+  }
+
+  async saveSnapshot(snapshot) {
+    this.latestSnapshot = snapshot;
+    await this.state.storage.put(SNAPSHOT_STORAGE_KEY, snapshot);
+  }
+
+  async clearSnapshot() {
+    this.latestSnapshot = null;
+    await this.state.storage.delete(SNAPSHOT_STORAGE_KEY);
   }
 
   currentHost() {
